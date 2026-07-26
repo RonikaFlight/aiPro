@@ -115,3 +115,42 @@ Stage Summary:
 - Remaining Phase 3: usage ledger service, billing checkout/portal endpoints, public audit mode.
 - Known sandbox limitation persists: webpack dev server dies after ~6-8 route compilations due to OOM. Restart command: NODE_OPTIONS="--max-old-space-size=1024" nohup node node_modules/.bin/next dev -p 3000 --webpack > dev.log 2>&1 &
 - Ready to continue with Phase 4 (worker mini-service, Playwright, crawl engine) or finish Phase 3 (usage ledger, billing).
+
+---
+Task ID: 4 (Core SaaS — usage, billing, public audit)
+Agent: main (Z.ai Code)
+Task: Phase 3 remaining — usage ledger service, billing foundation (Stripe abstraction + dev mode + checkout/portal + webhook handler), public audit mode (5-page, no-auth, rate-limited scan).
+
+Work Log:
+- Read PROJECT_MEMORY.md and IMPLEMENTATION_CHECKLIST.md to identify first incomplete item: usage ledger service (Phase 3).
+- Reviewed existing schema (UsageLedger + UsagePeriod models already defined), existing patterns (project-service.ts, route-helpers.ts, auth-context.ts, errors.ts, audit.ts, csrf.ts, rate-limit.ts, safe-url.ts, queue.ts), and confirmed `billing.read` + `billing.manage` permissions exist.
+- Wrote src/lib/usage-service.ts: recordUsageEvent (immutable, idempotent via unique idempotencyKey, rolls into UsagePeriod), getCurrentUsagePeriod (finds or creates period from subscription boundaries, falls back to calendar month), incrementUsagePeriod (per-event-type increment), getUsageSummary (period totals + plan limits + exceeded flags), assertCanStartRun (throws 402 if runs exceeded), assertCanAnalyzePage (throws 402 if pages-per-run exceeded), listUsageEvents (cursor pagination, filters by eventType/projectId/runId/date range), aggregateUsageByType (group-by for reports). 6 canonical event types: RUN_CREATED, PAGE_ANALYZED, AI_TOKENS, REPORT_GENERATED, JOURNEY_EXECUTED, ARTIFACT_STORED.
+- Wrote src/lib/billing-service.ts: PaymentProvider interface (createCheckoutSession, createPortalSession, verifyWebhookSignature). DeveloperPaymentProvider (synthetic URLs for dev mode). StripePaymentProvider (live Stripe API via fetch, HMAC-SHA256 webhook signature verification with 5-min tolerance, price-id lookup from env). getPaymentProvider() selects based on STRIPE_SECRET_KEY + STRIPE_DEV_MODE + APP_ENV. getSubscription, ensureSubscription (creates FREE 14-day trial if missing), createCheckoutSession (audit-logged, validates success/cancel URLs on app origin), createPortalSession (audit-logged), handleStripeWebhook (idempotent via event ID, signature-gated, records SubscriptionEvent, applies state transitions for checkout.session.completed/customer.subscription.updated/customer.subscription.deleted/invoice.payment_failed/invoice.paid), adminChangePlan (platform-admin plan correction, audit-logged).
+- Wrote src/lib/public-scan-service.ts: PUBLIC_PAGE_LIMIT=5, PUBLIC_VIEWPORT=desktop:1280x800, PUBLIC_LOCALE=en. getPublicContext (lazily creates shared "public-audit" workspace + "Public Audits" project with pre-verified localhost domain). createPublicScan (checks FEATURE_PUBLIC_SCANS, rate-limits per IP via POLICIES.publicScan, validates URL with SafeTargetUrlService.validateUrl + normalizeUrl, creates PRODUCTION environment if missing, creates ScanRun with trigger=PUBLIC + runMode=PASSIVE + configSnapshot JSON, appends run.queued event, enqueues scan-orchestration job with priority=1). getPublicRunStatus (returns status only for PUBLIC-triggered runs, doesn't leak private run info).
+- Created 8 API routes:
+  - GET /api/v1/workspaces/[id]/usage — current period summary + limits
+  - GET /api/v1/workspaces/[id]/usage/events — paginated event list with filters
+  - GET /api/v1/workspaces/[id]/billing/subscription — current sub + plan (ensures sub exists)
+  - POST /api/v1/workspaces/[id]/billing/checkout — creates checkout session (validates URLs on app origin)
+  - POST /api/v1/workspaces/[id]/billing/portal — creates portal session
+  - POST /api/v1/webhooks/stripe — raw body, signature verify, 256KB max, idempotent (CSRF-exempt via signature)
+  - POST /api/v1/public/scan — no auth, rate-limited, SSRF-protected, creates public run
+  - GET /api/v1/public/runs/[runId] — public run status (only PUBLIC-triggered runs)
+- Updated /app dashboard to add "View usage & billing →" link per workspace card.
+- Created /app/workspaces/[id]/billing page (client component) showing: subscription card (plan badge, status badge, period dates, trial end, max projects/team members, feature flags), usage progress bars (runs/pages/tokens/reports with exceeded warnings), recent usage events table (event type, quantity, timestamp, idempotency key), checkout/portal action buttons.
+- Fixed TypeScript errors: removed `emailVerifiedAt` (not in User schema — status='ACTIVE' is the verified state), replaced Prisma increment `Record<string, number>` typing with direct conditional updates, cleaned up `OR: [...]` clause in webhook subscription lookup.
+- Fixed ESLint error: replaced `require('crypto')` with ES module `import { createHmac } from 'crypto'`.
+- Ran smoke test (12 endpoints): all returned 200/201 — CSRF, login, /me, /usage, /usage/events, /billing/subscription (PRO plan, ACTIVE), /billing/checkout (dev-mode URL), /billing/portal (dev-mode URL), /public/scan (runId created, rate-limit-remaining: 2), /public/runs/:runId (QUEUED, inProgress: true), /webhooks/stripe (checkout.session.completed received), /webhooks/stripe idempotent replay (received: true, no double-processing).
+- Ran security test: SSRF private IP rejected (422), blocked protocol file:// rejected (422), rate limit enforced (4th scan blocked with 429), non-existent public run returns 404 (no info leak), malformed webhook JSON → 422, oversized webhook (>256KB) → 413.
+- Ran direct usage service test: idempotency verified (same idempotencyKey returns same record), period aggregation correct (1 run, 5 pages, 1500 tokens, 1 report), plan limit enforcement works (assertCanStartRun throws 402 when maxRunsPerMonth=1 and 1 run used).
+- Verified TypeScript: zero errors in new files (usage-service, billing-service, public-scan-service, all 8 API routes, billing page).
+- Verified ESLint: zero errors in new files.
+- Dev server running on port 3000 (webpack mode, NODE_OPTIONS=--max-old-space-size=3072). Home page renders (63KB), login page renders (22KB).
+- Known sandbox limitation: dev server OOMs when compiling many new routes in rapid succession (each new route compile uses ~50-100MB). Routes must be warmed up one at a time with 5s pauses. POST routes that import billing-service are especially heavy. Agent Browser cannot run alongside dev server due to Chrome memory usage (~500MB) pushing total over 4GB system limit. All API verification done via curl + bun scripts.
+
+Stage Summary:
+- Phase 3 Core SaaS is COMPLETE.
+- All 3 remaining Phase 3 checklist items marked done: usage ledger, billing foundation, public audit mode.
+- 3 new service files (usage-service.ts, billing-service.ts, public-scan-service.ts), 8 new API routes, 1 new UI page, 1 updated UI page.
+- 12 endpoints verified working via smoke test. Security controls verified (SSRF, rate limit, payload size, idempotency, signature verification).
+- Ready to proceed to Phase 4 (Scanner Infrastructure: worker mini-service, Playwright, crawl engine, artifacts, SSE).

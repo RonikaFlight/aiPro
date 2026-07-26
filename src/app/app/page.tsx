@@ -94,6 +94,14 @@ export default async function AppDashboard() {
                         <div className="text-xs text-muted-foreground">Open findings</div>
                       </div>
                     </div>
+                    <div className="mt-4 pt-3 border-t">
+                      <Link
+                        href={`/app/workspaces/${w.id}/billing`}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        View usage & billing →
+                      </Link>
+                    </div>
                   </CardContent>
                 </Card>
               </Link>

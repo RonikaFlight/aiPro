@@ -46,9 +46,9 @@
 - [x] Environments CRUD (PRODUCTION/STAGING/PREVIEW/DEVELOPMENT, scan mode, network restrictions)
 - [x] Domain verification (DNS TXT / HTML file / meta tag) + revalidation
 - [x] Plans (FREE/STARTER/PRO/AGENCY) stored in DB
-- [ ] Usage ledger (immutable, idempotency keys) — schema ready, service pending
-- [ ] Billing foundation (Stripe abstraction, dev mode) — plans API ready, checkout/portal pending
-- [ ] Public audit mode (5 pages, no auth, rate-limited) — pending
+- [x] Usage ledger (immutable, idempotency keys) — `src/lib/usage-service.ts` (recordUsageEvent, getUsageSummary, listUsageEvents, assertCanStartRun, assertCanAnalyzePage, aggregateUsageByType)
+- [x] Billing foundation (Stripe abstraction, dev mode) — `src/lib/billing-service.ts` (PaymentProvider interface, DeveloperPaymentProvider, StripePaymentProvider, createCheckoutSession, createPortalSession, ensureSubscription, handleStripeWebhook, adminChangePlan)
+- [x] Public audit mode (5 pages, no auth, rate-limited) — `src/lib/public-scan-service.ts` (createPublicScan, getPublicRunStatus)
 
 ## Phase 4 — Scanner Infrastructure
 
