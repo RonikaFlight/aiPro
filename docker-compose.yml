@@ -1,0 +1,183 @@
+# ProofPilot — Local Development Docker Compose (reference)
+#
+# In the sandbox we run only the Next.js app + worker mini-service (no Docker).
+# This file is a reference for production / full local setup. Run with:
+#
+#   docker compose up -d postgres redis minio mailpit
+#
+# Then start the app and worker:
+#   bun run dev
+#   bun run worker
+#
+# Spec compliance (section 4): required services are postgres, redis, minio,
+# mailpit, api, web, worker, scheduler, demo-target, reverse-proxy.
+
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: proofpilot
+      POSTGRES_USER: proofpilot
+      POSTGRES_PASSWORD: proofpilot-dev-password
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U proofpilot']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '1025:1025'  # SMTP
+      - '8025:8025'  # Web UI
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # Browser worker container — pinned Playwright image
+  # Used when running scans in production-isolated mode.
+  browser-worker:
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: '1000:1000'
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+          pids: 200
+    networks:
+      - internal
+
+  # Reverse proxy
+  reverse-proxy:
+    image: caddy:2-alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./infrastructure/reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - web
+    networks:
+      - default
+
+  # Application services (run via docker in full local mode)
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://proofpilot:proofpilot-dev-password@postgres:5432/proofpilot
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+      APP_ENV: development
+      APP_URL: http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - '3001:3000'
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost/api
+      NODE_ENV: development
+    depends_on:
+      - api
+    ports:
+      - '3000:3000'
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://proofpilot:proofpilot-dev-password@postgres:5432/proofpilot
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No DB credentials forwarded to browser process
+    # No host networking
+    # No Docker socket
+    # No host credentials
+    networks:
+      - internal
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/scheduler.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://proofpilot:proofpilot-dev-password@postgres:5432/proofpilot
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  demo-target:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/demo-target.Dockerfile
+    ports:
+      - '4000:3000'
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  internal:
+    internal: true
