@@ -778,3 +778,26 @@ Stage Summary:
 - Key design: run-level; finding IDs (trusted cuids) passed unfenced; page-derived content fenced; post-generation validation strips hallucinated IDs, deduplicates groups, removes single-finding groups; empty-findings case handled without AI call.
 - 0 new lint errors. No regressions.
 - Next incomplete item: "Cost controls" (Phase 8).
+
+---
+Task ID: 10
+Agent: main (Z.ai Code)
+Task: Phase 8 Cost Controls — per-plan/per-run/daily limits, circuit breaker, retry budget, timeout
+
+Work Log:
+- Read PROJECT_MEMORY.md + IMPLEMENTATION_CHECKLIST.md to identify first incomplete item: "Cost controls (per-plan/per-run/daily limits, circuit breaker, retry budget, timeout)" at Phase 8, line 113.
+- Studied existing infrastructure: types.ts (AiError with budget_exceeded/circuit_open kinds), usage.ts (getRunTokenUsage/getWorkspaceDailyTokenUsage), run-task.ts (structured-task wrapper), env.ts (AI_MAX_TOKENS_PER_RUN, AI_DAILY_WORKSPACE_BUDGET_TOKENS already defined).
+- Created `src/lib/ai/circuit-breaker.ts`: CircuitBreaker class with CLOSED→OPEN→HALF_OPEN state machine, per-workspace isolation via keyed registry, configurable failureThreshold + recoveryTimeoutMs, allow()/recordSuccess()/recordFailure()/reset() API, snapshot() diagnostics, getCircuitBreaker/resetCircuitBreaker/resetAllCircuitBreakers/getAllCircuitBreakerSnapshots/getCircuitBreakerSnapshot registry functions, defaultCircuitBreakerConfig reads from env.
+- Created `src/lib/ai/cost-controls.ts`: checkBudget() with 5 pre-call enforcement tiers (per-run tokens, per-workspace-daily tokens, per-plan monthly tokens, retry budget, circuit breaker), assertBudget() convenience that throws AiError(budget_exceeded/circuit_open), in-memory retry budget tracking via consumeRetryBudget/getRetryBudgetUsed/resetRetryBudget/resetAllRetryBudgets, getCostControlDiagnostics() for admin endpoints, fail-open on DB errors.
+- Modified `src/lib/env.ts`: Added 4 new env vars — AI_PLAN_MAX_TOKENS_MONTHLY (0=disabled), AI_MAX_RETRIES_PER_TASK (2), AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD (5), AI_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS (60000).
+- Modified `src/lib/ai/run-task.ts`: Integrated assertBudget() pre-check before every provider call in both runStructuredTask() and runTextTask(); added recordProviderSuccess()/recordProviderFailure() helper functions that only count transient provider errors (timeout/rate_limited/provider_error), not schema_validation.
+- Modified `src/lib/ai/index.ts`: Added barrel exports for cost-controls module (checkBudget, assertBudget, consumeRetryBudget, getRetryBudgetUsed, resetRetryBudget, resetAllRetryBudgets, getCostControlDiagnostics + types) and circuit-breaker module (getCircuitBreaker, resetCircuitBreaker, resetAllCircuitBreakers, getAllCircuitBreakerSnapshots, getCircuitBreakerSnapshot, defaultCircuitBreakerConfig, CircuitBreaker + types).
+- Updated IMPLEMENTATION_CHECKLIST.md: Marked "Cost controls" as [x] with detailed completion notes.
+- Updated PROJECT_MEMORY.md: "Remaining Phase 8" now shows **complete**. Updated "Last updated" section.
+- Ran bun run lint: 0 new errors (4 pre-existing errors in auth-service.ts/db.ts/route-helpers.ts + 2 pre-existing warnings in demo-target/page.tsx unchanged).
+
+Stage Summary:
+- Phase 8 AI is now fully complete: provider abstraction + versioned prompts + structured output + prompt-injection controls + 7 task-specific features + cost controls.
+- New files: src/lib/ai/circuit-breaker.ts, src/lib/ai/cost-controls.ts
+- Modified files: src/lib/env.ts, src/lib/ai/run-task.ts, src/lib/ai/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
+- No new lint errors. Next phase: Phase 9 Reports.

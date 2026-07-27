@@ -162,3 +162,32 @@ export {
   type ValidatedSemanticGroup,
   type SemanticGroupingJobPayload,
 } from './semantic-grouping'
+
+// ---------------- Phase 8: cost controls ----------------
+
+export {
+  checkBudget,
+  assertBudget,
+  consumeRetryBudget,
+  getRetryBudgetUsed,
+  resetRetryBudget,
+  resetAllRetryBudgets,
+  getCostControlDiagnostics,
+  type BudgetCheckOptions,
+  type BudgetCheckResult,
+  type BudgetExceededReason,
+  type CostControlDiagnostics,
+} from './cost-controls'
+
+export {
+  getCircuitBreaker,
+  resetCircuitBreaker,
+  resetAllCircuitBreakers,
+  getAllCircuitBreakerSnapshots,
+  getCircuitBreakerSnapshot,
+  defaultCircuitBreakerConfig,
+  CircuitBreaker,
+  type CircuitState,
+  type CircuitBreakerConfig,
+  type CircuitBreakerSnapshot,
+} from './circuit-breaker'

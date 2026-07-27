@@ -26,6 +26,9 @@ import type { PromptDefinition } from './prompts'
 import { assertMessageSafe } from './prompt-safety'
 import { getAiProvider } from './registry'
 import { recordLlmUsage } from './usage'
+import { assertBudget } from './cost-controls'
+import { getCircuitBreaker } from './circuit-breaker'
+import { AiError } from './types'
 import { logger } from '../logger'
 import type {
   AiProvider,
@@ -152,6 +155,53 @@ async function recordUsage(
 }
 
 // ------------------------------------------------------------------
+// Circuit-breaker integration helpers
+// ------------------------------------------------------------------
+
+/**
+ * Record a provider success on the workspace-scoped circuit breaker.
+ * Called after a successful provider call.
+ */
+function recordProviderSuccess(workspaceId?: string | null): void {
+  if (!workspaceId) return
+  try {
+    const breaker = getCircuitBreaker(`workspace:${workspaceId}`)
+    breaker.recordSuccess()
+  } catch (err) {
+    // Circuit-breaker errors must never break the main flow.
+    logger.warn('run-task: circuit breaker recordSuccess failed (swallowed)', {
+      workspaceId,
+      error: (err as Error).message,
+    })
+  }
+}
+
+/**
+ * Record a provider failure on the workspace-scoped circuit breaker.
+ * Called when a provider call throws. Only records for "real" errors
+ * (timeout, rate_limited, provider_error) — not for schema_validation
+ * (which indicates a model quality issue, not a provider availability issue).
+ */
+function recordProviderFailure(workspaceId?: string | null, err: unknown): void {
+  if (!workspaceId) return
+  try {
+    // Only count transient provider failures, not validation errors.
+    if (err instanceof AiError) {
+      const transient = ['timeout', 'rate_limited', 'provider_error'].includes(err.kind)
+      if (!transient) return
+    }
+
+    const breaker = getCircuitBreaker(`workspace:${workspaceId}`)
+    breaker.recordFailure()
+  } catch (err2) {
+    logger.warn('run-task: circuit breaker recordFailure failed (swallowed)', {
+      workspaceId,
+      error: (err2 as Error).message,
+    })
+  }
+}
+
+// ------------------------------------------------------------------
 // Public API
 // ------------------------------------------------------------------
 
@@ -176,22 +226,39 @@ export async function runStructuredTask<T>(
   // Defense-in-depth: never send unresolved secret refs to a model.
   assertMessageSafe(opts.userMessage, `task=${opts.taskType}`)
 
+  // Cost-control pre-check (budget + circuit breaker). Throws AiError if exceeded.
+  await assertBudget({
+    workspaceId: opts.workspaceId,
+    runId: opts.runId,
+    taskType: opts.taskType,
+  })
+
   const provider = resolveProvider(opts)
   const messages = buildMessages(prompt.systemMessage, opts.userMessage)
 
-  const resp: StructuredCompletionResponse<T> = await provider.completeStructured<T>(
-    {
-      messages,
-      taskType: opts.taskType,
-      promptVersion: prompt.version,
-      temperature: opts.temperature ?? prompt.temperature,
-      maxTokens: opts.maxTokens ?? prompt.maxTokens,
-      timeoutMs: opts.timeoutMs,
-      schema: prompt.schema as z.ZodType<T>,
-      schemaName: prompt.schemaName ?? `${opts.taskType}_schema`,
-    },
-    prompt.schema as z.ZodType<T>,
-  )
+  let resp: StructuredCompletionResponse<T>
+  try {
+    resp = await provider.completeStructured<T>(
+      {
+        messages,
+        taskType: opts.taskType,
+        promptVersion: prompt.version,
+        temperature: opts.temperature ?? prompt.temperature,
+        maxTokens: opts.maxTokens ?? prompt.maxTokens,
+        timeoutMs: opts.timeoutMs,
+        schema: prompt.schema as z.ZodType<T>,
+        schemaName: prompt.schemaName ?? `${opts.taskType}_schema`,
+      },
+      prompt.schema as z.ZodType<T>,
+    )
+  } catch (err) {
+    // Record failure on the circuit breaker (if workspace-scoped).
+    recordProviderFailure(opts.workspaceId, err)
+    throw err
+  }
+
+  // Record success on the circuit breaker.
+  recordProviderSuccess(opts.workspaceId)
 
   await recordUsage(resp, {
     taskType: opts.taskType,
@@ -227,17 +294,32 @@ export async function runTextTask(opts: RunTaskBaseOptions): Promise<RunTextTask
 
   assertMessageSafe(opts.userMessage, `task=${opts.taskType}`)
 
+  // Cost-control pre-check (budget + circuit breaker). Throws AiError if exceeded.
+  await assertBudget({
+    workspaceId: opts.workspaceId,
+    runId: opts.runId,
+    taskType: opts.taskType,
+  })
+
   const provider = resolveProvider(opts)
   const messages = buildMessages(prompt.systemMessage, opts.userMessage)
 
-  const resp: CompletionResponse = await provider.complete({
-    messages,
-    taskType: opts.taskType,
-    promptVersion: prompt.version,
-    temperature: opts.temperature ?? prompt.temperature,
-    maxTokens: opts.maxTokens ?? prompt.maxTokens,
-    timeoutMs: opts.timeoutMs,
-  })
+  let resp: CompletionResponse
+  try {
+    resp = await provider.complete({
+      messages,
+      taskType: opts.taskType,
+      promptVersion: prompt.version,
+      temperature: opts.temperature ?? prompt.temperature,
+      maxTokens: opts.maxTokens ?? prompt.maxTokens,
+      timeoutMs: opts.timeoutMs,
+    })
+  } catch (err) {
+    recordProviderFailure(opts.workspaceId, err)
+    throw err
+  }
+
+  recordProviderSuccess(opts.workspaceId)
 
   await recordUsage(resp, {
     taskType: opts.taskType,

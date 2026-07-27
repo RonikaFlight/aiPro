@@ -67,6 +67,10 @@ const schema = z.object({
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   AI_MAX_TOKENS_PER_RUN: z.coerce.number().int().positive().default(20000),
   AI_DAILY_WORKSPACE_BUDGET_TOKENS: z.coerce.number().int().positive().default(100000),
+  AI_PLAN_MAX_TOKENS_MONTHLY: z.coerce.number().int().min(0).default(0),
+  AI_MAX_RETRIES_PER_TASK: z.coerce.number().int().min(0).default(2),
+  AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(5),
+  AI_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
 
   WORKER_PORT: z.coerce.number().int().positive().default(3003),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
