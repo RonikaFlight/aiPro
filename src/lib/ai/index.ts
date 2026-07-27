@@ -151,3 +151,14 @@ export {
   type GenerateClientReportResult,
   type ClientReportJobPayload,
 } from './client-reports'
+
+// ---------------- Phase 8: semantic finding grouping ----------------
+
+export {
+  generateSemanticGrouping,
+  enqueueSemanticGrouping,
+  type GenerateSemanticGroupingOptions,
+  type GenerateSemanticGroupingResult,
+  type ValidatedSemanticGroup,
+  type SemanticGroupingJobPayload,
+} from './semantic-grouping'

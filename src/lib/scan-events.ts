@@ -24,6 +24,7 @@ export type ScanEventType =
   | 'run.summarized'
   | 'run.journey_proposed'
   | 'run.client_reported'
+  | 'run.grouped'
   | 'page.discovered'
   | 'page.analyzing'
   | 'page.analyzed'

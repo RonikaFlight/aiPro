@@ -44,6 +44,10 @@ import {
   generateClientReport,
   type ClientReportJobPayload,
 } from '../../../src/lib/ai/client-reports'
+import {
+  generateSemanticGrouping,
+  type SemanticGroupingJobPayload,
+} from '../../../src/lib/ai/semantic-grouping'
 import type { Job } from '../../../src/lib/queue'
 
 type AiEnrichmentPayload =
@@ -53,6 +57,7 @@ type AiEnrichmentPayload =
   | RemediationJobPayload
   | JourneyProposalJobPayload
   | ClientReportJobPayload
+  | SemanticGroupingJobPayload
 
 export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise<void> {
   const payload = job.payload
@@ -83,6 +88,9 @@ export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise
       break
     case 'client_report':
       await handleClientReport(job, payload as ClientReportJobPayload)
+      break
+    case 'semantic_grouping':
+      await handleSemanticGrouping(job, payload as SemanticGroupingJobPayload)
       break
     default:
       logger.warn('ai-enrichment: unknown task', { jobId: job.id, task })
@@ -533,6 +541,83 @@ async function handleClientReport(
       return
     }
     logger.warn('ai-enrichment: client_report failed', {
+      runId,
+      jobId: job.id,
+      error: (err as Error).message,
+    })
+    throw err
+  }
+}
+
+/**
+ * Handle a `semantic_grouping` ai-enrichment job.
+ *
+ * Generates (or returns the cached) AI semantic grouping for a completed scan run
+ * and emits a `run.grouped` scan event so SSE listeners on the run can refresh
+ * the UI. A `ValidationError` from the service (run still QUEUED/RUNNING) is
+ * treated as a soft skip.
+ */
+async function handleSemanticGrouping(
+  job: Job<AiEnrichmentPayload>,
+  payload: SemanticGroupingJobPayload,
+): Promise<void> {
+  const { runId, workspaceId, projectId } = payload
+
+  logger.info('ai-enrichment: semantic_grouping', { jobId: job.id, runId })
+
+  try {
+    const result = await generateSemanticGrouping(runId, {
+      workspaceId,
+      projectId: projectId ?? null,
+      // System-triggered (no user actor).
+      userId: null,
+      audit: { requestId: `worker:${job.id}`, workspaceId },
+    })
+
+    if (result.skipped) {
+      logger.debug('ai-enrichment: semantic_grouping skipped (feature flag off)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    if (result.cached) {
+      logger.debug('ai-enrichment: semantic_grouping already present (cached)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+
+    // Emit a scan event so SSE listeners on the run can refresh the UI.
+    await appendScanEvent(runId, 'run.grouped', {
+      groupCount: result.grouping?.groups.length ?? 0,
+      groupedFindingCount: result.grouping?.groups.reduce((s, g) => s + g.findingIds.length, 0) ?? 0,
+      provider: result.provider,
+      promptVersion: result.promptVersion,
+    }).catch(() => {
+      /* best-effort */
+    })
+
+    logger.info('ai-enrichment: semantic_grouping complete', {
+      runId,
+      jobId: job.id,
+      groupCount: result.grouping?.groups.length,
+      groupedFindingCount: result.grouping?.groups.reduce((s, g) => s + g.findingIds.length, 0),
+      provider: result.provider,
+      model: result.model,
+      promptVersion: result.promptVersion,
+    })
+  } catch (err) {
+    // A ValidationError means the run wasn't ready.
+    if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'ValidationError') {
+      logger.debug('ai-enrichment: semantic_grouping deferred (run not yet terminal)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    logger.warn('ai-enrichment: semantic_grouping failed', {
       runId,
       jobId: job.id,
       error: (err as Error).message,

@@ -746,3 +746,35 @@ Stage Summary:
 - Key design: run-level (not finding-level); client-facing tone avoids internal check IDs, selector syntax, console output; trusted scanner metadata (score, severity/category counts, page counts) unfenced; page-derived finding titles/descriptions/URLs fenced via prepareUntrusted+redactPii; ValidationError soft-skipped in worker.
 - 0 new lint errors. No regressions.
 - Next incomplete item: "Semantic finding grouping" (Phase 8).
+
+---
+Task ID: 10
+Agent: main (Z.ai Code)
+Task: Implement semantic finding grouping (Phase 8 — seventh and final task-specific AI feature)
+
+Work Log:
+- Read IMPLEMENTATION_CHECKLIST.md; identified "Semantic finding grouping" as first incomplete item.
+- Confirmed SemanticGroupingSchema + SEMANTIC_GROUPING_V1 prompt + 'semantic_grouping' AiTaskType already existed in prompts.ts/types.ts.
+- Added `aiSemanticGroupingJson String?` column to ScanRun model in prisma/schema.prisma.
+- Ran `bun run db:push` — schema synced, Prisma client regenerated.
+- Created `src/lib/ai/semantic-grouping.ts` service file following run-level pattern:
+  - `generateSemanticGrouping(runId, opts)`: loads run + project context; feature-flag guard; readiness guard (rejects QUEUED/RUNNING); idempotent unless force; gathers all active finding IDs (trusted scanner-produced cuids, passed unfenced so model can reference them) + top 50 finding details (titles, descriptions, selectors, URLs — page-derived, fenced via redactPii+prepareUntrusted); builds safe user message; calls runStructuredTask<SemanticGrouping>; post-generation validateGrouping strips hallucinated findingIds (model hallucination guard), deduplicates across groups (first-come), removes groups with <2 findings after validation; handles empty-findings case without AI call (produces empty grouping directly); persists ScanRun.aiSemanticGroupingJson as JSON {groups[{groupId, label, findingIds[], sharedRootCause}]}; records audit RUN_AI_SEMANTIC_GROUPING.
+  - `enqueueSemanticGrouping(runId, workspaceId, attribution)`: deduped ai-enrichment queue job via correlationId `ai:semantic_grouping:${runId}`.
+  - `parseCachedGrouping()`: best-effort JSON parse from storage.
+  - Key types: ValidatedSemanticGroup (groupId, label, findingIds[], sharedRootCause).
+- Updated `mini-services/worker/src/ai-enrichment.ts`: added SemanticGroupingJobPayload to union type, added case 'semantic_grouping' dispatch, added handleSemanticGrouping() function emitting run.grouped scan event (soft skip on ValidationError).
+- Added `'run.grouped'` to ScanEventType union in scan-events.ts.
+- Created API route `src/app/api/v1/runs/[runId]/semantic-grouping/route.ts`: POST endpoint with force body param, permission runs.read.
+- Updated `src/lib/ai/index.ts` barrel exports for semantic-grouping module.
+- Ran `bun run lint` — 0 new errors (4 pre-existing errors in auth-service.ts/db.ts/route-helpers.ts unchanged).
+- Updated IMPLEMENTATION_CHECKLIST.md: marked "Semantic finding grouping" as [x].
+- Updated PROJECT_MEMORY.md: updated "Remaining Phase 8" (cost controls only) and "Last updated" sections.
+
+Stage Summary:
+- Semantic finding grouping feature COMPLETE. All 7 task-specific AI features now done.
+- 1 new file: src/lib/ai/semantic-grouping.ts.
+- 1 new API route: src/app/api/v1/runs/[runId]/semantic-grouping/route.ts.
+- 4 files updated: prisma/schema.prisma, ai-enrichment.ts, scan-events.ts, ai/index.ts.
+- Key design: run-level; finding IDs (trusted cuids) passed unfenced; page-derived content fenced; post-generation validation strips hallucinated IDs, deduplicates groups, removes single-finding groups; empty-findings case handled without AI call.
+- 0 new lint errors. No regressions.
+- Next incomplete item: "Cost controls" (Phase 8).

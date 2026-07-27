@@ -560,6 +560,11 @@ model ScanRun {
   // ClientReport JSON ({ clientSummary, deliveryReadiness, positiveNotes,
   // attentionItems }) for the client-facing report. Null until generated.
   aiClientReportJson String?
+  // Phase 8 — AI semantic finding grouping. Holds the structured
+  // SemanticGrouping JSON ({ groups: [{ groupId, label, findingIds[],
+  // sharedRootCause }] }) so reports can present "one underlying issue"
+  // instead of listing every duplicate individually. Null until generated.
+  aiSemanticGroupingJson String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
