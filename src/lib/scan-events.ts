@@ -33,6 +33,7 @@ export type ScanEventType =
   | 'finding.comment_added'
   | 'finding.suppressed'
   | 'finding.unsuppressed'
+  | 'finding.explained'
   | 'analyzer.failed'
   | 'journey.queued'
   | 'journey.started'

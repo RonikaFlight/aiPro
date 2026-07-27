@@ -28,7 +28,13 @@ import type { z } from 'zod'
 export class MockAiProvider implements AiProvider {
   readonly name: AiProviderName = 'mock'
   /** Call log for test assertions. */
-  readonly calls: Array<{ taskType: string; promptVersion: string; kind: 'text' | 'structured' }> = []
+  readonly calls: Array<{
+    taskType: string
+    promptVersion: string
+    kind: 'text' | 'structured'
+    /** The messages sent to the provider (deep copy so later mutations don't affect the log). */
+    messages: CompletionRequest['messages']
+  }> = []
 
   isConfigured(): boolean {
     return true
@@ -51,7 +57,12 @@ export class MockAiProvider implements AiProvider {
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResponse> {
-    this.calls.push({ taskType: req.taskType, promptVersion: req.promptVersion, kind: 'text' })
+    this.calls.push({
+      taskType: req.taskType,
+      promptVersion: req.promptVersion,
+      kind: 'text',
+      messages: req.messages.map((m) => ({ ...m })),
+    })
     const digest = this.digest(req.messages)
     const content = this.cannedText(req.taskType, digest)
     return {
@@ -67,7 +78,12 @@ export class MockAiProvider implements AiProvider {
     req: StructuredCompletionRequest,
     schema: z.ZodType<T>,
   ): Promise<StructuredCompletionResponse<T>> {
-    this.calls.push({ taskType: req.taskType, promptVersion: req.promptVersion, kind: 'structured' })
+    this.calls.push({
+      taskType: req.taskType,
+      promptVersion: req.promptVersion,
+      kind: 'structured',
+      messages: req.messages.map((m) => ({ ...m })),
+    })
     const digest = this.digest(req.messages)
     const candidate = this.cannedJson(req.taskType, digest, req.schemaName)
 

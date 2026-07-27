@@ -89,3 +89,14 @@ export {
   type RunStructuredTaskResult,
   type RunTextTaskResult,
 } from './run-task'
+
+// ---------------- Phase 8: finding explanations (first task-specific feature) ----------------
+
+export {
+  generateFindingExplanation,
+  enqueueFindingExplanation,
+  AI_ENRICHMENT_QUEUE,
+  type GenerateExplanationOptions,
+  type GenerateExplanationResult,
+  type FindingExplanationJobPayload,
+} from './finding-explanations'

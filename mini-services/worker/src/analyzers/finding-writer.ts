@@ -22,6 +22,8 @@ import { appendScanEvent } from '../../../../src/lib/scan-events'
 import { fingerprint } from '../../../../src/lib/crypto'
 import { resolveSeverity } from '../../../../src/lib/finding-severity'
 import { maybeAutoReopenFinding, isFindingSuppressed } from '../../../../src/lib/findings-service'
+import { enqueueFindingExplanation } from '../../../../src/lib/ai/finding-explanations'
+import { env } from '../../../../src/lib/env'
 import type { FindingCandidate, AnalyzerContext } from './types'
 
 export interface WrittenFinding {
@@ -109,6 +111,7 @@ export async function writeFindings(
           severity: true,
           title: true,
           status: true,
+          aiExplanation: true,
         },
       })
 
@@ -127,6 +130,18 @@ export async function writeFindings(
         .catch(() => {
           /* best-effort */
         })
+
+      // Phase 8: enqueue an AI-explanation job for findings that don't yet have
+      // one. The queue's correlationId dedup collapses concurrent enqueues for
+      // the same finding into a single job; `generateFindingExplanation` is
+      // itself idempotent (skips when aiExplanation is already set). Best-effort
+      // — never blocks the scan pipeline.
+      if (env.FEATURE_AI_ENRICHMENT && !finding.aiExplanation) {
+        await enqueueFindingExplanation(finding.id, ctx.workspaceId, {
+          projectId: ctx.projectId,
+          runId: ctx.runId,
+        })
+      }
 
       // Phase 6: auto-reopen if the finding was previously RESOLVED.
       let reopened = false

@@ -25,6 +25,7 @@ import {
 import { handleScanOrchestration } from './orchestrator'
 import { handlePageAnalysis } from './page-analysis'
 import { handleJourneyExecution } from './journey-runner'
+import { handleAiEnrichment } from './ai-enrichment'
 
 const PORT = env.WORKER_PORT
 
@@ -45,8 +46,15 @@ registerHandler('journey-execution', handleJourneyExecution as never, {
   concurrency: 1, // journeys are heavier than page analysis — keep concurrency low
 })
 
-// Stub for other queues so they don't pile up unprocessed — Phase 8+ will replace.
-const stubQueues: QueueName[] = ['artifact-processing', 'ai-enrichment', 'report-generation', 'email', 'webhooks', 'maintenance']
+// ai-enrichment handler — Phase 8: generates AI explanations for findings
+// (and future AI-driven features). Idempotent + best-effort; AI calls can be
+// slow so a dedicated queue keeps them off the scan-critical path.
+registerHandler('ai-enrichment', handleAiEnrichment as never, {
+  concurrency: 2, // AI enrichment is I/O-bound (waiting on a provider); allow 2 in parallel
+})
+
+// Stub for other queues so they don't pile up unprocessed — Phase 9+ will replace.
+const stubQueues: QueueName[] = ['artifact-processing', 'report-generation', 'email', 'webhooks', 'maintenance']
 for (const q of stubQueues) {
   registerHandler(
     q,
@@ -140,7 +148,7 @@ logger.info('ProofPilot worker started', {
 })
 
 // ---- Start queue workers ----
-const queues: QueueName[] = ['scan-orchestration', 'page-analysis', 'journey-execution']
+const queues: QueueName[] = ['scan-orchestration', 'page-analysis', 'journey-execution', 'ai-enrichment']
 for (const q of queues) {
   startWorker(q).catch((err) => {
     logger.error('Queue worker crashed', { queue: q, error: String(err) })
