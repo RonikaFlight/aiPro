@@ -24,9 +24,13 @@ import {
   generateFindingExplanation,
   type FindingExplanationJobPayload,
 } from '../../../src/lib/ai/finding-explanations'
+import {
+  generateRunSummary,
+  type RunSummaryJobPayload,
+} from '../../../src/lib/ai/run-summaries'
 import type { Job } from '../../../src/lib/queue'
 
-type AiEnrichmentPayload = FindingExplanationJobPayload
+type AiEnrichmentPayload = FindingExplanationJobPayload | RunSummaryJobPayload
 
 export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise<void> {
   const payload = job.payload
@@ -35,12 +39,19 @@ export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise
     return
   }
 
-  switch (payload.task) {
+  // Widen to `string` so the `default` branch below does not narrow `task` to
+  // `never` (TS2339) once both union literals are exhausted.
+  const task: string = payload.task
+
+  switch (task) {
     case 'finding_explanation':
-      await handleFindingExplanation(job, payload)
+      await handleFindingExplanation(job, payload as FindingExplanationJobPayload)
+      break
+    case 'run_summary':
+      await handleRunSummary(job, payload as RunSummaryJobPayload)
       break
     default:
-      logger.warn('ai-enrichment: unknown task', { jobId: job.id, task: payload.task })
+      logger.warn('ai-enrichment: unknown task', { jobId: job.id, task })
   }
 }
 
@@ -101,6 +112,87 @@ async function handleFindingExplanation(
     // often transient.
     logger.warn('ai-enrichment: finding_explanation failed', {
       findingId,
+      jobId: job.id,
+      error: (err as Error).message,
+    })
+    throw err
+  }
+}
+
+/**
+ * Handle a `run_summary` ai-enrichment job.
+ *
+ * Generates (or returns the cached) AI summary for a completed scan run and
+ * emits a `run.summarized` scan event so SSE listeners on the run can refresh
+ * the UI. Generation is idempotent — if a summary already exists the job is a
+ * no-op. A `ValidationError` from the service (run still QUEUED/RUNNING) is
+ * treated as a soft skip rather than a failure, since the auto-enqueue path
+ * fires when the last page is analyzed but the run row's status may briefly
+ * still read RUNNING under contention.
+ */
+async function handleRunSummary(
+  job: Job<AiEnrichmentPayload>,
+  payload: RunSummaryJobPayload,
+): Promise<void> {
+  const { runId, workspaceId, projectId } = payload
+
+  logger.info('ai-enrichment: run_summary', { jobId: job.id, runId })
+
+  try {
+    const result = await generateRunSummary(runId, {
+      workspaceId,
+      projectId: projectId ?? null,
+      // System-triggered (no user actor).
+      userId: null,
+      audit: { requestId: `worker:${job.id}`, workspaceId },
+    })
+
+    if (result.skipped) {
+      logger.debug('ai-enrichment: run_summary skipped (feature flag off)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    if (result.cached) {
+      logger.debug('ai-enrichment: run_summary already present (cached)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+
+    // Emit a scan event so SSE listeners on the run can refresh the UI.
+    await appendScanEvent(runId, 'run.summarized', {
+      provider: result.provider,
+      promptVersion: result.promptVersion,
+      deliveryReadiness: result.summary?.deliveryReadiness ?? null,
+    }).catch(() => {
+      /* best-effort */
+    })
+
+    logger.info('ai-enrichment: run_summary complete', {
+      runId,
+      jobId: job.id,
+      provider: result.provider,
+      model: result.model,
+      promptVersion: result.promptVersion,
+    })
+  } catch (err) {
+    // A ValidationError means the run wasn't ready (still QUEUED/RUNNING).
+    // This can happen under contention between the last page-analysis job and
+    // the orchestrator's status update. Treat as a soft skip — the on-demand
+    // API endpoint will generate the summary once the run is truly done.
+    if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'ValidationError') {
+      logger.debug('ai-enrichment: run_summary deferred (run not yet terminal)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    // Re-throw other errors so the queue's retry/dead-letter policy applies.
+    logger.warn('ai-enrichment: run_summary failed', {
+      runId,
       jobId: job.id,
       error: (err as Error).message,
     })

@@ -19,6 +19,7 @@ import { db } from '../../../src/lib/db'
 import { logger } from '../../../src/lib/logger'
 import { appendScanEvent } from '../../../src/lib/scan-events'
 import { computeAndPersistRunScore } from '../../../src/lib/quality-score'
+import { enqueueRunSummary } from '../../../src/lib/ai/run-summaries'
 import { runPageAnalysis, parseViewport } from './analyzers'
 import type { Job } from '../../../src/lib/queue'
 import type { CrawlData } from './analyzers/types'
@@ -192,6 +193,15 @@ export async function handlePageAnalysis(job: Job<PageAnalysisPayload>): Promise
       totalFindings: scoreBreakdown.totalFindings,
     }).catch(() => {
       // best-effort
+    })
+
+    // Phase 8 — auto-enqueue an AI run summary now that all findings exist
+    // and the final score is computed. The ai-enrichment job is deduped by
+    // correlationId so concurrent last-page finishes collapse into one job.
+    // The worker's run_summary handler emits `run.summarized` when done.
+    // Best-effort: never blocks the page-analysis pipeline on AI enqueue.
+    await enqueueRunSummary(runId, workspaceId, { projectId }).catch(() => {
+      // best-effort — logged inside enqueueRunSummary
     })
   }
 }

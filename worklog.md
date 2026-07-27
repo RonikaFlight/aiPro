@@ -579,3 +579,44 @@ Stage Summary:
 - Standalone verification: 60/60 assertions passed. ESLint: 0 errors in new/modified files. TypeScript: 0 errors in new/modified files. Phase 8 prompts test re-verified: 197/197 still pass (Mock enhancement is backward-compatible).
 - Dev server healthy (HTTP 200 on /). New API route compilation triggers OOM in sandbox (documented limitation); verified via tsc + eslint + standalone tests instead.
 - Ready to proceed to the next Phase 8 item: "Run summaries" (wire runStructuredTask<RunSummary> into the worker's scan-completion path / an API endpoint to generate a summary when a run completes) — or "Cost controls" (per-plan/per-run/daily budgets + circuit breaker + retry budget using the already-built getRunTokenUsage/getWorkspaceDailyTokenUsage aggregates).
+---
+Task ID: 1
+Agent: main (Phase 8 run summaries)
+Task: Implement run summaries — the first incomplete item in IMPLEMENTATION_CHECKLIST.md
+
+Work Log:
+- Read PROJECT_MEMORY.md and IMPLEMENTATION_CHECKLIST.md to identify first incomplete item: Phase 8 → Run summaries
+- Analyzed existing AI infrastructure: prompts.ts (RunSummarySchema + run_summary prompt already defined), finding-explanations.ts (reference pattern), ai-enrichment.ts (worker dispatch), page-analysis.ts (hook point for auto-enqueue)
+- Added Prisma schema columns: ScanRun.aiSummary (String?) + ScanRun.aiSummaryJson (String?) — pushed with db:push
+- Created src/lib/ai/run-summaries.ts — service module mirroring finding-explanations.ts:
+  - generateRunSummary(runId, opts): synchronous, idempotent, feature-flagged, readiness-guarded, builds safe user message (trusted run metadata unfenced; finding titles fenced+redacted+truncated), calls runStructuredTask<RunSummary>, persists, audits RUN_AI_SUMMARY
+  - enqueueRunSummary(runId, workspaceId, attribution): deduped ai-enrichment queue job via correlationId
+  - gatherRunContext: aggregates findings by category×severity (trusted), picks top 15 titles by severity (untrusted), excludes RESOLVED/IGNORED/ACCEPTED_RISK/FALSE_POSITIVE
+  - parseCachedSummary: best-effort parse of stored JSON for idempotent returns
+- Updated scan-events.ts: added 'run.summarized' to ScanEventType union
+- Updated mini-services/worker/src/ai-enrichment.ts: extended handleAiEnrichment dispatch to handle 'run_summary' task → handleRunSummary (emits run.summarized scan event; ValidationError from readiness guard is treated as soft skip)
+- Updated mini-services/worker/src/page-analysis.ts: auto-enqueues run summary after run.scored event (when all pages analyzed, findings exist, score computed) — best-effort, non-blocking
+- Created src/app/api/v1/runs/[runId]/summary/route.ts: GET (return cached summary or 404) + POST (trigger generation with force flag, permission runs.read, CSRF protected)
+- Updated src/lib/ai/index.ts: exported run-summaries types and functions
+- Fixed TS2339 in ai-enrichment.ts: widened switch discriminator to `string` type to avoid `never` narrowing in default branch
+- Added test env vars to .env (SESSION_SECRET, CSRF_SECRET, PROOFPILOT_ENCRYPTION_KEY)
+- Created scripts/test-phase8-run-summaries-standalone.ts — 68/68 tests pass:
+  1. Happy path (Mock provider) — generates RunSummary, persists, records usage+audit
+  2. Idempotency — cached=true, no new provider call
+  3. force=true — regenerates, new usage row
+  4. Feature-flag guard — skipped=true, no provider call, no DB write
+  5. Cross-workspace isolation — NotFoundError (404)
+  6. Readiness guard — ValidationError (422) for QUEUED/RUNNING runs
+  7. Prompt-injection defense — malicious finding title is fenced (UNTRUSTED), system message clean
+  8. PII redaction — email in title → [REDACTED_EMAIL]; trusted metadata (counts, score) unfenced
+  9. Aggregate context — RESOLVED findings excluded from category×severity counts and top titles
+  10. Queue enqueue + dedup — one job via correlationId; feature-flag-off = no job
+  11. Worker handler dispatch — run_summary job → generateRunSummary + run.summarized scan event; cached path no re-emit
+- Confirmed finding-explanations test still passes (60/60) — no regressions
+- Verified: 0 new lint errors, 0 new TS errors (41 pre-existing, unchanged)
+
+Stage Summary:
+- Run summaries fully implemented: service module, API route (GET+POST), worker dispatch, auto-enqueue on run completion, scan event, Prisma columns
+- All safety properties inherited from the AI module: prompt-injection defense (fencing + redaction), Zod validation, feature flag, idempotency, audit trail
+- IMPLEMENTATION_CHECKLIST.md: "Run summaries" marked [x]
+- Next incomplete item: "Business-impact categorization" (Phase 8)

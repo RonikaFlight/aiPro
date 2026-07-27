@@ -21,6 +21,7 @@ export type ScanEventType =
   | 'run.failed'
   | 'run.cancelled'
   | 'run.scored'
+  | 'run.summarized'
   | 'page.discovered'
   | 'page.analyzing'
   | 'page.analyzed'

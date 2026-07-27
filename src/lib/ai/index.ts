@@ -100,3 +100,13 @@ export {
   type GenerateExplanationResult,
   type FindingExplanationJobPayload,
 } from './finding-explanations'
+
+// ---------------- Phase 8: run summaries ----------------
+
+export {
+  generateRunSummary,
+  enqueueRunSummary,
+  type GenerateRunSummaryOptions,
+  type GenerateRunSummaryResult,
+  type RunSummaryJobPayload,
+} from './run-summaries'

@@ -545,6 +545,12 @@ model ScanRun {
   blockerCount    Int      @default(0)
   score           Float?
   previousScore   Float?
+  // Phase 8 — AI run summary. `aiSummaryJson` holds the full structured
+  // RunSummary object (executiveSummary / topIssues / deliveryReadiness /
+  // recommendation); `aiSummary` holds the short plain-language
+  // executiveSummary string for fast display. Both null until generated.
+  aiSummary       String?
+  aiSummaryJson   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
