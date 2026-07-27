@@ -100,7 +100,7 @@
 
 ## Phase 8 — AI
 
-- [ ] Provider abstraction (Z.ai GLM adapter, OpenAI-compatible adapter, Mock for tests)
+- [x] Provider abstraction (Z.ai GLM adapter, OpenAI-compatible adapter, Mock for tests) — `src/lib/ai/` (AiProvider interface with complete/completeStructured; GlmAiProvider via z-ai-web-dev-sdk with env→.z-ai-config bridge; OpenAiCompatibleProvider via fetch to AI_BASE_URL; MockAiProvider deterministic/offline; registry with fallback-to-mock when configured provider not ready; AiError taxonomy; cost-per-1K-token table + estimateCostUsd)
 - [ ] Versioned prompts + Zod-validated structured output
 - [ ] Finding explanations
 - [ ] Run summaries
