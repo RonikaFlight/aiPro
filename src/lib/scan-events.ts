@@ -22,6 +22,7 @@ export type ScanEventType =
   | 'run.cancelled'
   | 'run.scored'
   | 'run.summarized'
+  | 'run.journey_proposed'
   | 'page.discovered'
   | 'page.analyzing'
   | 'page.analyzed'

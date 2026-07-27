@@ -36,6 +36,10 @@ import {
   generateRemediationSuggestion,
   type RemediationJobPayload,
 } from '../../../src/lib/ai/remediation-suggestions'
+import {
+  generateJourneyProposal,
+  type JourneyProposalJobPayload,
+} from '../../../src/lib/ai/journey-proposals'
 import type { Job } from '../../../src/lib/queue'
 
 type AiEnrichmentPayload =
@@ -43,6 +47,7 @@ type AiEnrichmentPayload =
   | RunSummaryJobPayload
   | BusinessImpactJobPayload
   | RemediationJobPayload
+  | JourneyProposalJobPayload
 
 export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise<void> {
   const payload = job.payload
@@ -67,6 +72,9 @@ export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise
       break
     case 'remediation':
       await handleRemediation(job, payload as RemediationJobPayload)
+      break
+    case 'journey_proposal':
+      await handleJourneyProposal(job, payload as JourneyProposalJobPayload)
       break
     default:
       logger.warn('ai-enrichment: unknown task', { jobId: job.id, task })
@@ -357,6 +365,88 @@ async function handleRemediation(
     // Re-throw so the queue's retry/dead-letter policy applies.
     logger.warn('ai-enrichment: remediation failed', {
       findingId,
+      jobId: job.id,
+      error: (err as Error).message,
+    })
+    throw err
+  }
+}
+
+/**
+ * Handle a `journey_proposal` ai-enrichment job.
+ *
+ * Generates (or returns the cached) AI journey proposal for a completed scan run
+ * and emits a `run.journey_proposed` scan event so SSE listeners on the run
+ * can refresh the UI. A `ValidationError` from the service (run still
+ * QUEUED/RUNNING) is treated as a soft skip.
+ */
+async function handleJourneyProposal(
+  job: Job<AiEnrichmentPayload>,
+  payload: JourneyProposalJobPayload,
+): Promise<void> {
+  const { runId, workspaceId, projectId } = payload
+
+  logger.info('ai-enrichment: journey_proposal', { jobId: job.id, runId })
+
+  try {
+    const result = await generateJourneyProposal(runId, {
+      workspaceId,
+      projectId: projectId ?? null,
+      // System-triggered (no user actor).
+      userId: null,
+      audit: { requestId: `worker:${job.id}`, workspaceId },
+    })
+
+    if (result.skipped) {
+      logger.debug('ai-enrichment: journey_proposal skipped (feature flag off)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    if (result.cached) {
+      logger.debug('ai-enrichment: journey_proposal already present (cached)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+
+    // Emit a scan event so SSE listeners on the run can refresh the UI.
+    await appendScanEvent(runId, 'run.journey_proposed', {
+      proposalName: result.proposal?.name ?? null,
+      stepCount: result.proposal?.steps.length ?? 0,
+      stepsValid: result.proposal?.stepsValid ?? false,
+      policyValid: result.proposal?.policyValid ?? false,
+      suggestedRunMode: result.proposal?.suggestedRunMode ?? null,
+      provider: result.provider,
+      promptVersion: result.promptVersion,
+    }).catch(() => {
+      /* best-effort */
+    })
+
+    logger.info('ai-enrichment: journey_proposal complete', {
+      runId,
+      jobId: job.id,
+      proposalName: result.proposal?.name,
+      stepCount: result.proposal?.steps.length,
+      stepsValid: result.proposal?.stepsValid,
+      policyValid: result.proposal?.policyValid,
+      provider: result.provider,
+      model: result.model,
+      promptVersion: result.promptVersion,
+    })
+  } catch (err) {
+    // A ValidationError means the run wasn't ready.
+    if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'ValidationError') {
+      logger.debug('ai-enrichment: journey_proposal deferred (run not yet terminal)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    logger.warn('ai-enrichment: journey_proposal failed', {
+      runId,
       jobId: job.id,
       error: (err as Error).message,
     })

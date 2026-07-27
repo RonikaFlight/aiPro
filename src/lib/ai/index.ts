@@ -130,3 +130,14 @@ export {
   type GenerateRemediationResult,
   type RemediationJobPayload,
 } from './remediation-suggestions'
+
+// ---------------- Phase 8: journey proposals ----------------
+
+export {
+  generateJourneyProposal,
+  enqueueJourneyProposal,
+  type GenerateJourneyProposalOptions,
+  type GenerateJourneyProposalResult,
+  type ValidatedJourneyProposal,
+  type JourneyProposalJobPayload,
+} from './journey-proposals'

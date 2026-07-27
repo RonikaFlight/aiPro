@@ -681,3 +681,37 @@ Stage Summary:
 - Design properties: every finding gets AI remediation suggestion auto-generated asynchronously on first occurrence; idempotent; prompt-injection defense; PII redaction; feature-flagged; cross-workspace isolated; audited; Zod-validated; Mock fallback.
 - 0 new lint errors. No regressions.
 - Next incomplete item: "Journey proposals" (Phase 8).
+
+---
+Task ID: 9 (Phase 8 — Journey Proposals)
+Agent: main (Z.ai Code)
+Task: Implement AI-powered journey proposals for scan runs (Phase 8 checklist item).
+
+Work Log:
+- Read IMPLEMENTATION_CHECKLIST.md — first incomplete item: "Journey proposals" (Phase 8).
+- Studied existing journey infrastructure: journey-service.ts (CRUD + versioning + validation), journey-types.ts (JourneyStepsSchema, 17 step types, run modes), journey-policy.ts (multilingual destructive blocklist, validateStepsAgainstPolicy).
+- Verified that JourneyProposalSchema + JOURNEY_PROPOSAL_V1 prompt + 'journey_proposal' AiTaskType already existed in prompts.ts/types.ts.
+- Added `aiJourneyProposalJson String?` column to ScanRun in prisma/schema.prisma.
+- Ran `bun run db:push` — schema synced, Prisma Client regenerated.
+- Created src/lib/ai/journey-proposals.ts (run-level, not finding-level):
+  - generateJourneyProposal(runId, opts): loads run + discovered pages from ScanPage (max 30, sorted by depth); feature-flag guard; readiness guard rejects QUEUED/RUNNING; idempotent unless force=true; buildUserMessage applies redactPii + prepareUntrusted to all page-derived URLs/titles; calls runStructuredTask<JourneyProposal>; validates proposed steps against canonical JourneyStepsSchema (same as hand-authored) + validateStepsAgainstPolicy in SAFE_INTERACTION mode; computes suggestedRunMode; persists ScanRun.aiJourneyProposalJson with raw AI output + _validation metadata; records audit RUN_AI_JOURNEY_PROPOSAL.
+  - enqueueJourneyProposal: deduped ai-enrichment queue job via correlationId.
+  - validateProposal: re-validates cached proposals through canonical Zod + policy.
+  - parseCachedProposal: best-effort parse with re-validation (never trusts cached data).
+  - Types: GenerateJourneyProposalOptions, GenerateJourneyProposalResult, ValidatedJourneyProposal (with policyValid/stepsValid/suggestedRunMode), JourneyProposalJobPayload.
+- Updated mini-services/worker/src/ai-enrichment.ts: added journey_proposal dispatch + handleJourneyProposal function (emits run.journey_proposed scan event, soft skip on ValidationError), added JourneyProposalJobPayload to union type.
+- Updated src/lib/scan-events.ts: added 'run.journey_proposed' ScanEventType.
+- Created src/app/api/v1/runs/[runId]/journey-proposals/route.ts: POST endpoint with force flag, runs.read permission.
+- Updated src/lib/ai/index.ts: added journey-proposals barrel exports.
+- Ran `bun run lint` — 0 errors from new code (4 pre-existing errors, 2 pre-existing warnings).
+- Updated IMPLEMENTATION_CHECKLIST.md: marked "Journey proposals" as [x].
+- Updated PROJECT_MEMORY.md: last-updated section now reflects journey proposals as the fifth task-specific AI feature.
+
+Stage Summary:
+- Journey proposals feature COMPLETE.
+- 1 new file: src/lib/ai/journey-proposals.ts.
+- 1 new API route: src/app/api/v1/runs/[runId]/journey-proposals/route.ts.
+- 4 files updated: prisma/schema.prisma, ai-enrichment.ts, scan-events.ts, ai/index.ts.
+- Key design: proposal is run-level (not finding-level); steps validated against same JourneyStepsSchema + safe-action policy as hand-authored journeys; never auto-saves as Journey; user must explicitly review and accept; ValidationError soft-skipped in worker (run may not be terminal yet under contention).
+- 0 new lint errors. No regressions.
+- Next incomplete item: "Client-friendly report language" (Phase 8).

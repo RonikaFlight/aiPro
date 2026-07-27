@@ -551,6 +551,11 @@ model ScanRun {
   // executiveSummary string for fast display. Both null until generated.
   aiSummary       String?
   aiSummaryJson   String?
+  // Phase 8 — AI journey proposal. Holds the latest AI-generated journey
+  // proposal JSON ({ name, entryUrl, steps, rationale }) for user review.
+  // Null until generated. User must explicitly accept the proposal to create
+  // a Journey.
+  aiJourneyProposalJson String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
