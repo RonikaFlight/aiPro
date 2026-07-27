@@ -141,3 +141,13 @@ export {
   type ValidatedJourneyProposal,
   type JourneyProposalJobPayload,
 } from './journey-proposals'
+
+// ---------------- Phase 8: client-friendly report language ----------------
+
+export {
+  generateClientReport,
+  enqueueClientReport,
+  type GenerateClientReportOptions,
+  type GenerateClientReportResult,
+  type ClientReportJobPayload,
+} from './client-reports'

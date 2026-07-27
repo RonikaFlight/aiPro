@@ -715,3 +715,34 @@ Stage Summary:
 - Key design: proposal is run-level (not finding-level); steps validated against same JourneyStepsSchema + safe-action policy as hand-authored journeys; never auto-saves as Journey; user must explicitly review and accept; ValidationError soft-skipped in worker (run may not be terminal yet under contention).
 - 0 new lint errors. No regressions.
 - Next incomplete item: "Client-friendly report language" (Phase 8).
+
+---
+Task ID: 9
+Agent: main (Z.ai Code)
+Task: Implement client-friendly report language (Phase 8 — sixth task-specific AI feature)
+
+Work Log:
+- Read PROJECT_MEMORY.md + IMPLEMENTATION_CHECKLIST.md; identified "Client-friendly report language" as first incomplete item.
+- Confirmed ClientReportSchema + CLIENT_REPORT_V1 prompt + 'client_report' AiTaskType already existed in prompts.ts/types.ts.
+- Added `aiClientReportJson String?` column to ScanRun model in prisma/schema.prisma.
+- Ran `bun run db:push` — schema synced, Prisma client regenerated.
+- Created `src/lib/ai/client-reports.ts` service file following run-summaries pattern (run-level, not finding-level):
+  - `generateClientReport(runId, opts)`: loads run + project context; feature-flag guard; readiness guard (rejects QUEUED/RUNNING); idempotent unless force; gathers finding aggregates (severity counts, category counts — trusted) + top 25 finding details (titles, descriptions, URLs — page-derived, fenced via redactPii+prepareUntrusted); builds safe user message; calls runStructuredTask<ClientReport>; persists ScanRun.aiClientReportJson as JSON {clientSummary, deliveryReadiness, positiveNotes[], attentionItems[]}; records audit RUN_AI_CLIENT_REPORT.
+  - `enqueueClientReport(runId, workspaceId, attribution)`: deduped ai-enrichment queue job via correlationId `ai:client_report:${runId}`.
+  - `parseCachedReport()`: best-effort JSON parse from storage.
+- Updated `mini-services/worker/src/ai-enrichment.ts`: added ClientReportJobPayload to union type, added case 'client_report' dispatch, added handleClientReport() function emitting run.client_reported scan event (soft skip on ValidationError).
+- Added `'run.client_reported'` to ScanEventType union in scan-events.ts.
+- Created API route `src/app/api/v1/runs/[runId]/client-report/route.ts`: POST endpoint with force body param, permission runs.read.
+- Updated `src/lib/ai/index.ts` barrel exports for client-reports module.
+- Ran `bun run lint` — 0 new errors (4 pre-existing errors in auth-service.ts/db.ts/route-helpers.ts unchanged).
+- Updated IMPLEMENTATION_CHECKLIST.md: marked "Client-friendly report language" as [x].
+- Updated PROJECT_MEMORY.md: updated "Remaining Phase 8" and "Last updated" sections.
+
+Stage Summary:
+- Client-friendly report language feature COMPLETE.
+- 1 new file: src/lib/ai/client-reports.ts.
+- 1 new API route: src/app/api/v1/runs/[runId]/client-report/route.ts.
+- 4 files updated: prisma/schema.prisma, ai-enrichment.ts, scan-events.ts, ai/index.ts.
+- Key design: run-level (not finding-level); client-facing tone avoids internal check IDs, selector syntax, console output; trusted scanner metadata (score, severity/category counts, page counts) unfenced; page-derived finding titles/descriptions/URLs fenced via prepareUntrusted+redactPii; ValidationError soft-skipped in worker.
+- 0 new lint errors. No regressions.
+- Next incomplete item: "Semantic finding grouping" (Phase 8).

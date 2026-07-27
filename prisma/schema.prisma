@@ -556,6 +556,10 @@ model ScanRun {
   // Null until generated. User must explicitly accept the proposal to create
   // a Journey.
   aiJourneyProposalJson String?
+  // Phase 8 — AI client-friendly report language. Holds the structured
+  // ClientReport JSON ({ clientSummary, deliveryReadiness, positiveNotes,
+  // attentionItems }) for the client-facing report. Null until generated.
+  aiClientReportJson String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

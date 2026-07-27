@@ -23,6 +23,7 @@ export type ScanEventType =
   | 'run.scored'
   | 'run.summarized'
   | 'run.journey_proposed'
+  | 'run.client_reported'
   | 'page.discovered'
   | 'page.analyzing'
   | 'page.analyzed'

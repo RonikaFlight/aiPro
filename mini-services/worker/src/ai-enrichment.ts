@@ -40,6 +40,10 @@ import {
   generateJourneyProposal,
   type JourneyProposalJobPayload,
 } from '../../../src/lib/ai/journey-proposals'
+import {
+  generateClientReport,
+  type ClientReportJobPayload,
+} from '../../../src/lib/ai/client-reports'
 import type { Job } from '../../../src/lib/queue'
 
 type AiEnrichmentPayload =
@@ -48,6 +52,7 @@ type AiEnrichmentPayload =
   | BusinessImpactJobPayload
   | RemediationJobPayload
   | JourneyProposalJobPayload
+  | ClientReportJobPayload
 
 export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise<void> {
   const payload = job.payload
@@ -75,6 +80,9 @@ export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise
       break
     case 'journey_proposal':
       await handleJourneyProposal(job, payload as JourneyProposalJobPayload)
+      break
+    case 'client_report':
+      await handleClientReport(job, payload as ClientReportJobPayload)
       break
     default:
       logger.warn('ai-enrichment: unknown task', { jobId: job.id, task })
@@ -446,6 +454,85 @@ async function handleJourneyProposal(
       return
     }
     logger.warn('ai-enrichment: journey_proposal failed', {
+      runId,
+      jobId: job.id,
+      error: (err as Error).message,
+    })
+    throw err
+  }
+}
+
+/**
+ * Handle a `client_report` ai-enrichment job.
+ *
+ * Generates (or returns the cached) AI client-friendly report for a completed
+ * scan run and emits a `run.client_reported` scan event so SSE listeners on
+ * the run can refresh the UI. A `ValidationError` from the service (run still
+ * QUEUED/RUNNING) is treated as a soft skip.
+ */
+async function handleClientReport(
+  job: Job<AiEnrichmentPayload>,
+  payload: ClientReportJobPayload,
+): Promise<void> {
+  const { runId, workspaceId, projectId } = payload
+
+  logger.info('ai-enrichment: client_report', { jobId: job.id, runId })
+
+  try {
+    const result = await generateClientReport(runId, {
+      workspaceId,
+      projectId: projectId ?? null,
+      // System-triggered (no user actor).
+      userId: null,
+      audit: { requestId: `worker:${job.id}`, workspaceId },
+    })
+
+    if (result.skipped) {
+      logger.debug('ai-enrichment: client_report skipped (feature flag off)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    if (result.cached) {
+      logger.debug('ai-enrichment: client_report already present (cached)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+
+    // Emit a scan event so SSE listeners on the run can refresh the UI.
+    await appendScanEvent(runId, 'run.client_reported', {
+      deliveryReadiness: result.report?.deliveryReadiness ?? null,
+      positiveNoteCount: result.report?.positiveNotes.length ?? 0,
+      attentionItemCount: result.report?.attentionItems.length ?? 0,
+      provider: result.provider,
+      promptVersion: result.promptVersion,
+    }).catch(() => {
+      /* best-effort */
+    })
+
+    logger.info('ai-enrichment: client_report complete', {
+      runId,
+      jobId: job.id,
+      deliveryReadiness: result.report?.deliveryReadiness,
+      positiveNoteCount: result.report?.positiveNotes.length,
+      attentionItemCount: result.report?.attentionItems.length,
+      provider: result.provider,
+      model: result.model,
+      promptVersion: result.promptVersion,
+    })
+  } catch (err) {
+    // A ValidationError means the run wasn't ready.
+    if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'ValidationError') {
+      logger.debug('ai-enrichment: client_report deferred (run not yet terminal)', {
+        runId,
+        jobId: job.id,
+      })
+      return
+    }
+    logger.warn('ai-enrichment: client_report failed', {
       runId,
       jobId: job.id,
       error: (err as Error).message,
