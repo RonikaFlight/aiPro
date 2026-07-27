@@ -695,6 +695,7 @@ model Finding {
   evidence        String?  // JSON
   aiExplanation   String?
   aiSummary       String?
+  aiRemediation   String?  // JSON: { summary, steps[], estimatedEffort }
   firstSeenAt     DateTime @default(now())
   lastSeenAt      DateTime @default(now())
   resolvedAt      DateTime?

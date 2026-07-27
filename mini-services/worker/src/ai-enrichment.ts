@@ -32,9 +32,17 @@ import {
   generateBusinessImpacts,
   type BusinessImpactJobPayload,
 } from '../../../src/lib/ai/business-impacts'
+import {
+  generateRemediationSuggestion,
+  type RemediationJobPayload,
+} from '../../../src/lib/ai/remediation-suggestions'
 import type { Job } from '../../../src/lib/queue'
 
-type AiEnrichmentPayload = FindingExplanationJobPayload | RunSummaryJobPayload | BusinessImpactJobPayload
+type AiEnrichmentPayload =
+  | FindingExplanationJobPayload
+  | RunSummaryJobPayload
+  | BusinessImpactJobPayload
+  | RemediationJobPayload
 
 export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise<void> {
   const payload = job.payload
@@ -56,6 +64,9 @@ export async function handleAiEnrichment(job: Job<AiEnrichmentPayload>): Promise
       break
     case 'business_impact':
       await handleBusinessImpact(job, payload as BusinessImpactJobPayload)
+      break
+    case 'remediation':
+      await handleRemediation(job, payload as RemediationJobPayload)
       break
     default:
       logger.warn('ai-enrichment: unknown task', { jobId: job.id, task })
@@ -272,6 +283,79 @@ async function handleBusinessImpact(
   } catch (err) {
     // Re-throw so the queue's retry/dead-letter policy applies.
     logger.warn('ai-enrichment: business_impact failed', {
+      findingId,
+      jobId: job.id,
+      error: (err as Error).message,
+    })
+    throw err
+  }
+}
+
+/**
+ * Handle a `remediation` ai-enrichment job.
+ *
+ * Generates (or returns the cached) AI remediation suggestion for a finding and
+ * emits a `finding.remediated` scan event so SSE listeners on the parent run
+ * can refresh the UI.
+ */
+async function handleRemediation(
+  job: Job<AiEnrichmentPayload>,
+  payload: RemediationJobPayload,
+): Promise<void> {
+  const { findingId, workspaceId, projectId, runId } = payload
+
+  logger.info('ai-enrichment: remediation', { jobId: job.id, findingId, runId: runId ?? undefined })
+
+  try {
+    const result = await generateRemediationSuggestion(findingId, {
+      workspaceId,
+      projectId: projectId ?? null,
+      runId: runId ?? null,
+      // System-triggered (no user actor).
+      userId: null,
+      audit: { requestId: `worker:${job.id}`, workspaceId },
+    })
+
+    if (result.skipped) {
+      logger.debug('ai-enrichment: remediation skipped (feature flag off)', {
+        findingId,
+        jobId: job.id,
+      })
+      return
+    }
+    if (result.cached) {
+      logger.debug('ai-enrichment: remediation already present (cached)', {
+        findingId,
+        jobId: job.id,
+      })
+      return
+    }
+
+    // Emit a scan event so SSE listeners on the parent run can refresh the UI.
+    if (runId) {
+      await appendScanEvent(runId, 'finding.remediated', {
+        findingId,
+        stepCount: result.remediation?.steps.length ?? 0,
+        estimatedEffort: result.remediation?.estimatedEffort ?? null,
+        provider: result.provider,
+        promptVersion: result.promptVersion,
+      }).catch(() => {
+        /* best-effort */
+      })
+    }
+
+    logger.info('ai-enrichment: remediation complete', {
+      findingId,
+      jobId: job.id,
+      stepCount: result.remediation?.steps.length ?? 0,
+      estimatedEffort: result.remediation?.estimatedEffort,
+      provider: result.provider,
+      model: result.model,
+      promptVersion: result.promptVersion,
+    })
+  } catch (err) {
+    // Re-throw so the queue's retry/dead-letter policy applies.
+    logger.warn('ai-enrichment: remediation failed', {
       findingId,
       jobId: job.id,
       error: (err as Error).message,

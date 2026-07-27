@@ -24,6 +24,7 @@ import { resolveSeverity } from '../../../../src/lib/finding-severity'
 import { maybeAutoReopenFinding, isFindingSuppressed } from '../../../../src/lib/findings-service'
 import { enqueueFindingExplanation } from '../../../../src/lib/ai/finding-explanations'
 import { enqueueBusinessImpacts } from '../../../../src/lib/ai/business-impacts'
+import { enqueueRemediationSuggestion } from '../../../../src/lib/ai/remediation-suggestions'
 import { env } from '../../../../src/lib/env'
 import type { FindingCandidate, AnalyzerContext } from './types'
 
@@ -114,6 +115,7 @@ export async function writeFindings(
           status: true,
           aiExplanation: true,
           businessImpact: true,
+          aiRemediation: true,
         },
       })
 
@@ -146,6 +148,12 @@ export async function writeFindings(
       }
       if (env.FEATURE_AI_ENRICHMENT && !finding.businessImpact) {
         await enqueueBusinessImpacts(finding.id, ctx.workspaceId, {
+          projectId: ctx.projectId,
+          runId: ctx.runId,
+        })
+      }
+      if (env.FEATURE_AI_ENRICHMENT && !finding.aiRemediation) {
+        await enqueueRemediationSuggestion(finding.id, ctx.workspaceId, {
           projectId: ctx.projectId,
           runId: ctx.runId,
         })

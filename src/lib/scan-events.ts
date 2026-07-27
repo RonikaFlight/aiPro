@@ -36,6 +36,7 @@ export type ScanEventType =
   | 'finding.unsuppressed'
   | 'finding.explained'
   | 'finding.categorized'
+  | 'finding.remediated'
   | 'analyzer.failed'
   | 'journey.queued'
   | 'journey.started'

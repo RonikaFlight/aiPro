@@ -120,3 +120,13 @@ export {
   type GenerateBusinessImpactsResult,
   type BusinessImpactJobPayload,
 } from './business-impacts'
+
+// ---------------- Phase 8: remediation suggestions ----------------
+
+export {
+  generateRemediationSuggestion,
+  enqueueRemediationSuggestion,
+  type GenerateRemediationOptions,
+  type GenerateRemediationResult,
+  type RemediationJobPayload,
+} from './remediation-suggestions'
