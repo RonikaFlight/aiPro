@@ -63,3 +63,10 @@ export {
   type ListSharesResult,
   type SignedArtifactParams,
 } from './secure-sharing'
+
+export {
+  generatePdfReport,
+  type PdfReportType,
+  type GeneratePdfOptions,
+  type GeneratePdfResult,
+} from './pdf-export'

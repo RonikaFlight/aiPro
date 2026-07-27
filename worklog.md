@@ -884,3 +884,30 @@ Stage Summary:
 - Modified files: prisma/schema.prisma (ReportShare + User relations), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
 - Schema migration applied via db:push.
 - Remaining Phase 9: PDF export, approval workflow.
+
+---
+Task ID: 13 (PDF Export)
+Agent: main (Z.ai Code)
+Task: Phase 9 — PDF export: headers/footers, page numbers, screenshots, severity labels, branding, page breaks, EN + FA, RTL.
+
+Work Log:
+- Installed dependencies: `pdfkit` (v0.19.1) + `@types/pdfkit` (v0.17.6).
+- Created `src/lib/reports/pdf-export.ts` (~1150 lines): comprehensive PDF generation service.
+  - `BrandedPdfBuilder` class: wraps PDFKit with A4 layout, branded headers (brand name in accent color + "ProofPilot Quality Report" label + separator line), branded footers (centered page numbers "Page N of M" + custom footer text or timestamp + separator), `bufferPages: true` for post-render header/footer placement.
+  - RTL support: `isRtl(locale)` checks for fa/ar/he/ur; all text helpers use `builder.rtl` to reverse alignment (right/left) and position calculations.
+  - Layout helpers: `sectionTitle(text, fontSize)` with accent underline, `subTitle`, `bodyText` with lineGap, `labelValue` pairs, `severityBadge(severity)` with colored rounded-rect backgrounds (BLOCKER=#dc2626 through INFO=#6b7280), `statusPill(status)` with status-colored pills (OPEN→#dc2626, RESOLVED→#16a34a, etc.), `table(headers, rows)` with alternating row backgrounds, header repeat on page overflow, `metricCard(label, value, color)` with accent left-border + gray background card, `screenshotPlaceholder(label, artifactId)` with dashed-border placeholder showing artifact ID.
+  - `renderTechnicalReport()`: title page (report title, project name, base URL, score metric card, run metadata, AI executive summary), run configuration section, findings summary (severity/category tables + semantic groups), findings detail (sorted by severity, each with severity badge + status pill + title + category/URL + description + AI explanation + AI remediation + evidence screenshot placeholder + separator), performance summary (CWV metric cards with good/poor color thresholds for LCP≤2500/≤4000, CLS≤0.1/≤0.25, INP≤200/≤500, avg load time, slowest page), accessibility summary (severity table + categories list), runtime errors (console/network/blocked/journey failures), pages tested table (first 50), limitations.
+  - `renderClientReport()`: branded title page (brand name, custom intro paragraph, "Quality Assurance Report" title, score card), executive summary (AI summary, delivery readiness, positive notes as checkmarks, attention items as warnings), quality metrics table, issues overview (critical/resolved/remaining table), critical issue detail (severity badge + title + client description + affected URL), limitations, contact info (email + URL or fallback text).
+  - `generatePdfReport(opts)`: creates BrandedPdfBuilder, dispatches to renderTechnicalReport or renderClientReport based on reportType, calls finalize() to write headers/footers to all buffered pages, returns `{ buffer: Buffer, filename, generatedAt, pageCount }`.
+  - Types: PdfReportType, GeneratePdfOptions, GeneratePdfResult, BrandingInfo.
+  - Helper functions: extractBranding (detects ClientFacingReport vs TechnicalReport via 'branding' in report), getPrimaryLocale, formatDate, formatDuration, truncateText.
+- Created API route `POST /api/v1/runs/[runId]/pdf-export` (src/app/api/v1/runs/[runId]/pdf-export/route.ts): permission runs.read, CSRF, Zod body schema (reportType required, locale optional), generates TechnicalReport or ClientFacingReport then passes to generatePdfReport, returns binary PDF response with Content-Type: application/pdf, Content-Disposition: attachment with generated filename, Content-Length, X-Request-Id, X-Pdf-Page-Count, X-Pdf-Generated-At headers.
+- Updated `src/lib/reports/index.ts` barrel exports with generatePdfReport + PdfReportType + GeneratePdfOptions + GeneratePdfResult types.
+- Fixed bugs: removed duplicate `const doc` in renderFinding, fixed extractBranding condition from `report.reportType === 'CLIENT' || 'branding' in report` (always truthy due to `||` precedence) to `'branding' in report && (report as ClientFacingReport).branding`, removed unused imports (PDFOptions, env, ReportPage, ReportJourney, ReportPerformance, ReportAccessibility, ReportErrors, ReportSemanticGroup).
+- Lint: 0 new errors (pre-existing baseline: 4 errors + 2 warnings unchanged).
+
+Stage Summary:
+- New files: src/lib/reports/pdf-export.ts, src/app/api/v1/runs/[runId]/pdf-export/route.ts
+- Modified files: package.json (pdfkit + @types/pdfkit), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
+- No schema changes needed.
+- Remaining Phase 9: approval workflow.
