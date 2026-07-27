@@ -50,6 +50,8 @@ model User {
   findingSuppressions      FindingSuppression[]   @relation("FindingSuppressionCreator")
   reports                  Report[]
   reportApprovals          ReportApproval[]
+  journeysCreated          Journey[]              @relation("JourneyCreator")
+  projectSecretsCreated    ProjectSecret[]        @relation("ProjectSecretCreator")
   apiKeys                  ApiKey[]
   notifications            Notification[]
   notificationPreferences  NotificationPreference[]
@@ -251,6 +253,7 @@ model Project {
   artifacts       Artifact[]
   visualBaselines VisualBaseline[]
   reports         Report[]
+  projectSecrets  ProjectSecret[]
 
   @@index([workspaceId])
   @@index([status])
@@ -380,22 +383,29 @@ model Journey {
   projectId       String
   name            String
   description     String?
-  status          String   @default("DRAFT") // JourneyStatus
+  status          String   @default("DRAFT") // JourneyStatus: DRAFT | ACTIVE | ARCHIVED | DELETED
+  entryUrl        String?  // optional override of project productionUrl
+  personaId       String?  // optional Persona for credentials/locale/viewport
   currentVersion  Int      @default(1)
+  createdById     String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   versions        JourneyVersion[]
+  runs            JourneyRun[]
+  createdBy       User?    @relation("JourneyCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([projectId])
+  @@index([status])
 }
 
 model JourneyVersion {
   id              String   @id @default(cuid())
   journeyId       String
   version         Int
-  stepsJson       String   // JSON array of JourneyStep
+  stepsJson       String   // JSON array of JourneyStep (validated by Zod)
+  changeLog       String?  // optional description of changes
   createdBy       String?
   createdAt       DateTime @default(now())
 
@@ -403,6 +413,86 @@ model JourneyVersion {
 
   @@unique([journeyId, version])
   @@index([journeyId])
+}
+
+model JourneyRun {
+  id              String   @id @default(cuid())
+  journeyId       String
+  journeyVersion  Int
+  scanRunId       String?  // parent scan run (null for standalone journey run)
+  projectId       String
+  workspaceId     String
+  environmentId   String?
+  personaId       String?
+  status          String   @default("QUEUED") // JourneyRunStatus: QUEUED | RUNNING | COMPLETED | FAILED | CANCELLED
+  runMode         String   @default("PASSIVE") // RunMode (inherited from scan run)
+  trigger         String   @default("MANUAL") // JourneyTrigger: MANUAL | SCAN | SCHEDULED
+  targetUrl       String
+  viewport        String?
+  locale          String?
+  browser         String   @default("chromium")
+  stepsTotal      Int      @default(0)
+  stepsPassed     Int      @default(0)
+  stepsFailed     Int      @default(0)
+  stepsSkipped    Int      @default(0)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  failedReason    String?
+  triggeredById   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  journey         Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  scanRun         ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
+  stepResults     JourneyStepResult[]
+
+  @@index([journeyId])
+  @@index([scanRunId])
+  @@index([projectId])
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model JourneyStepResult {
+  id              String   @id @default(cuid())
+  journeyRunId    String
+  stepIndex       Int
+  stepType        String   // JourneyStepType
+  stepLabel       String?
+  status          String   // PASS | FAIL | SKIPPED
+  durationMs      Int      @default(0)
+  error           String?
+  beforeScreenshotId String? // Artifact id
+  afterScreenshotId  String? // Artifact id
+  consoleErrors   Int      @default(0)
+  networkErrors   Int      @default(0)
+  metadataJson    String?  // JSON (e.g. selector, url, assertion result)
+  createdAt       DateTime @default(now())
+
+  journeyRun      JourneyRun @relation(fields: [journeyRunId], references: [id], onDelete: Cascade)
+
+  @@index([journeyRunId])
+  @@index([status])
+}
+
+// Project-scoped secret vault for {{secret.NAME}} references in journey steps.
+// Values are AES-256-GCM encrypted with the master key. Keys are returned to the UI;
+// values are only ever decrypted inside the worker (never serialized to API responses).
+model ProjectSecret {
+  id              String   @id @default(cuid())
+  projectId       String
+  key             String   // [a-zA-Z0-9_]+, max 64 chars
+  valueEncrypted  String   // JSON EncryptedValue
+  description     String?
+  createdById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("ProjectSecretCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, key])
+  @@index([projectId])
 }
 
 // ===========================================================
@@ -444,6 +534,7 @@ model ScanRun {
   findings        Finding[]
   artifacts       Artifact[]
   reports         Report[]
+  journeyRuns     JourneyRun[]
 
   @@index([projectId])
   @@index([workspaceId])

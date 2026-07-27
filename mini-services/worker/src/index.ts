@@ -24,6 +24,7 @@ import {
 } from '../../../src/lib/queue'
 import { handleScanOrchestration } from './orchestrator'
 import { handlePageAnalysis } from './page-analysis'
+import { handleJourneyExecution } from './journey-runner'
 
 const PORT = env.WORKER_PORT
 
@@ -38,8 +39,14 @@ registerHandler('page-analysis', handlePageAnalysis as never, {
   concurrency: env.WORKER_CONCURRENCY,
 })
 
-// Stub for other queues so they don't pile up unprocessed — Phase 5+ will replace.
-const stubQueues: QueueName[] = ['journey-execution', 'artifact-processing', 'ai-enrichment', 'report-generation', 'email', 'webhooks', 'maintenance']
+// journey-execution handler — executes journey steps in an isolated browser context
+// (Phase 7). Non-retryable by design: journeys may have side effects on the target app.
+registerHandler('journey-execution', handleJourneyExecution as never, {
+  concurrency: 1, // journeys are heavier than page analysis — keep concurrency low
+})
+
+// Stub for other queues so they don't pile up unprocessed — Phase 8+ will replace.
+const stubQueues: QueueName[] = ['artifact-processing', 'ai-enrichment', 'report-generation', 'email', 'webhooks', 'maintenance']
 for (const q of stubQueues) {
   registerHandler(
     q,
@@ -133,7 +140,7 @@ logger.info('ProofPilot worker started', {
 })
 
 // ---- Start queue workers ----
-const queues: QueueName[] = ['scan-orchestration', 'page-analysis']
+const queues: QueueName[] = ['scan-orchestration', 'page-analysis', 'journey-execution']
 for (const q of queues) {
   startWorker(q).catch((err) => {
     logger.error('Queue worker crashed', { queue: q, error: String(err) })

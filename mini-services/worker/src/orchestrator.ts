@@ -244,6 +244,15 @@ export async function handleScanOrchestration(job: Job<ScanOrchestrationPayload>
         durationMs: result.durationMs,
       })
 
+      // Enqueue journey runs if the scan config included journeyIds.
+      // Journey runs execute after the scan completes — they need the crawl + analysis
+      // to be done first so the worker can focus on journey execution.
+      try {
+        await enqueueJourneyRuns(runId, payload, config)
+      } catch (err) {
+        logger.warn('Failed to enqueue journey runs', { runId, error: String(err) })
+      }
+
       logger.info('Scan orchestration completed', {
         runId,
         pages: totalPages,
@@ -275,6 +284,161 @@ async function markRunFailed(runId: string, reason: string): Promise<void> {
     },
   })
   await appendScanEvent(runId, 'run.failed', { reason })
+}
+
+/**
+ * Enqueue journey runs for any journeys declared in the scan config.
+ * Each journey gets its own JourneyRun + journey-execution queue job.
+ *
+ * Journey runs only execute if the scan run's runMode permits interaction
+ * (SAFE_INTERACTION or higher). PASSIVE scans skip journeys entirely —
+ * a passive scan cannot perform the actions a journey requires.
+ */
+async function enqueueJourneyRuns(
+  runId: string,
+  payload: ScanOrchestrationPayload,
+  config: { journeyIds?: string[] | null; viewports: string[]; locales: string[] },
+): Promise<void> {
+  const journeyIds = config.journeyIds ?? null
+  if (!journeyIds || journeyIds.length === 0) return
+
+  // PASSIVE scans cannot run journeys
+  const runMode = payload.runMode as 'PASSIVE' | 'SAFE_INTERACTION' | 'TEST_TRANSACTION' | 'CUSTOM_APPROVED'
+  if (runMode === 'PASSIVE') {
+    logger.info('Skipping journey runs — scan run is PASSIVE', { runId })
+    return
+  }
+
+  // Load journey records — they must be ACTIVE and belong to the same project
+  const journeys = await db.journey.findMany({
+    where: {
+      id: { in: journeyIds },
+      projectId: payload.projectId,
+      status: 'ACTIVE',
+    },
+    include: {
+      versions: { orderBy: { version: 'desc' }, take: 1, select: { stepsJson: true, version: true } },
+      project: {
+        select: {
+          primaryLocale: true,
+          defaultTimezone: true,
+          environments: { where: { enabled: true }, select: { id: true, type: true, baseUrl: true, scanMode: true, allowedHostnames: true } },
+        },
+      },
+    },
+  })
+
+  if (journeys.length === 0) {
+    logger.info('No active journeys to run', { runId, journeyIds })
+    return
+  }
+
+  // Resolve environment (reuse the scan run's environmentId if present)
+  let environment = payload.environmentId
+    ? journeys[0]!.project.environments.find((e) => e.id === payload.environmentId)
+    : journeys[0]!.project.environments.find((e) => e.type === 'PRODUCTION') ?? journeys[0]!.project.environments[0]
+  if (!environment) {
+    logger.warn('No enabled environment for journey runs', { runId })
+    return
+  }
+
+  // Verify environment scanMode permits the run mode
+  const envModeRank: Record<string, number> = { PASSIVE: 0, SAFE_INTERACTION: 1, TEST_TRANSACTION: 2, CUSTOM_APPROVED: 3 }
+  if ((envModeRank[environment.scanMode] ?? 0) < envModeRank[runMode]) {
+    logger.warn('Environment scanMode does not permit journey run mode', {
+      runId, scanMode: environment.scanMode, runMode,
+    })
+    return
+  }
+
+  // Build allowedOrigins from environment baseUrl + allowedHostnames
+  const allowedOrigins = new Set<string>(payload.allowedOrigins)
+  try {
+    allowedOrigins.add(new URL(environment.baseUrl).origin)
+  } catch { /* ignore */ }
+  if (environment.allowedHostnames) {
+    for (const h of environment.allowedHostnames.split(',').map((s) => s.trim()).filter(Boolean)) {
+      const scheme = h === 'localhost' && env.APP_ENV === 'development' ? 'http' : 'https'
+      allowedOrigins.add(`${scheme}://${h}`)
+    }
+  }
+
+  const locale = config.locales[0] ?? journeys[0]!.project.primaryLocale
+  const viewport = config.viewports[0] ?? 'desktop:1366x768'
+  const timezone = journeys[0]!.project.defaultTimezone
+
+  for (const journey of journeys) {
+    const version = journey.versions[0]
+    if (!version) {
+      logger.warn('Journey has no versions — skipping', { journeyId: journey.id })
+      continue
+    }
+
+    const journeyRun = await db.journeyRun.create({
+      data: {
+        journeyId: journey.id,
+        journeyVersion: version.version,
+        scanRunId: runId,
+        projectId: payload.projectId,
+        workspaceId: payload.workspaceId,
+        environmentId: environment.id,
+        personaId: journey.personaId,
+        status: 'QUEUED',
+        runMode,
+        trigger: 'SCAN',
+        targetUrl: payload.targetUrl,
+        viewport,
+        locale,
+        browser: 'chromium',
+        stepsTotal: (() => {
+          try {
+            return JSON.parse(version.stepsJson).length
+          } catch {
+            return 0
+          }
+        })(),
+        triggeredById: null, // SYSTEM trigger
+      },
+    })
+
+    const jobId = await enqueue(
+      'journey-execution',
+      {
+        journeyRunId: journeyRun.id,
+        journeyId: journey.id,
+        journeyVersion: version.version,
+        scanRunId: runId,
+        projectId: payload.projectId,
+        workspaceId: payload.workspaceId,
+        environmentId: environment.id,
+        personaId: journey.personaId,
+        runMode,
+        trigger: 'SCAN',
+        targetUrl: payload.targetUrl,
+        allowedOrigins: Array.from(allowedOrigins),
+        locale,
+        viewport,
+        timezone,
+      },
+      {
+        workspaceId: payload.workspaceId,
+        correlationId: `journey-run-${journeyRun.id}`,
+        idempotencyKey: `journey-run-${journeyRun.id}`,
+        maxAttempts: 1,
+      },
+    )
+
+    await appendScanEvent(runId, 'journey.queued', {
+      journeyId: journey.id,
+      journeyRunId: journeyRun.id,
+      jobId,
+      version: version.version,
+    })
+
+    logger.info('Journey run enqueued by scan orchestrator', {
+      runId, journeyId: journey.id, journeyRunId: journeyRun.id, jobId,
+    })
+  }
 }
 
 async function persistPage(

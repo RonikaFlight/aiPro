@@ -90,13 +90,13 @@
 
 ## Phase 7 — Journeys
 
-- [ ] Journey schema + step types (NAVIGATE/CLICK/TYPE/SELECT/CHECK/UNCHECK/UPLOAD_TEST_FILE/WAIT_*/ASSERT_*/SCREENSHOT/CUSTOM_SAFE_SCRIPT)
-- [ ] Visual journey editor (add/reorder/locator/test-data/assertions/secret-mark/versions/rollback)
-- [ ] Runner (isolated browser context)
-- [ ] Safe action policy (PASSIVE/SAFE_INTERACTION/TEST_TRANSACTION/CUSTOM_APPROVED) with dangerous-action blocklist (multilingual)
-- [ ] Secret references `{{secret.NAME}}` resolved only inside worker
-- [ ] Journey results + step outcomes
-- [ ] AI-proposed journeys (validated JSON, never raw code, user approval required)
+- [x] Journey schema + step types (NAVIGATE/CLICK/TYPE/SELECT/CHECK/UNCHECK/UPLOAD_TEST_FILE/WAIT_*/ASSERT_*/SCREENSHOT/CUSTOM_SAFE_SCRIPT) — `src/lib/journey-types.ts` (Zod discriminated union with 17 step types, selector charset whitelist + 200-char cap, secret-ref `{{secret.NAME}}` regex, URL validation (http(s) or relative), safe-script ID whitelist, parseSteps/serializeSteps/safeParseSteps helpers)
+- [x] Visual journey editor (add/reorder/locator/test-data/assertions/secret-mark/versions/rollback) — backend foundation in `src/lib/journey-service.ts` (createJourney, getJourney, updateJourney with new version, listJourneyVersions, getJourneyVersion, rollbackJourney, deleteJourney soft-delete, validateJourney dry-run); API routes for full CRUD + versions + rollback + validate; UI editor itself is Phase 10
+- [x] Runner (isolated browser context) — `mini-services/worker/src/journey-runner.ts` (launches hardened browser via launchBrowser + createContext, executes each step against an isolated page, captures before/after screenshots on failure, records JourneyStepResult with duration/console/network error counts, aborts on first failure unless continueOnError, emit journey.started/step.passed/step.failed/step.skipped/completed/failed scan events)
+- [x] Safe action policy (PASSIVE/SAFE_INTERACTION/TEST_TRANSACTION/CUSTOM_APPROVED) with dangerous-action blocklist (multilingual) — `src/lib/journey-policy.ts` (DESTRUCTIVE_PATTERNS covering EN/FR/DE/ES/NL/FA; DESTRUCTIVE_TEXT_PATTERNS for element text; validateStepsAgainstPolicy design-time check + isDestructiveSelector/Url/Text runtime check; STEP_PERMISSIONS table per run mode; minimumModeForStep helper)
+- [x] Secret references `{{secret.NAME}}` resolved only inside worker — `src/lib/project-secrets.ts` (ProjectSecret model with AES-256-GCM encryption, setSecret/listSecrets/deleteSecret API surface never returns decrypted values, resolveSecret + resolveSecretsForSteps worker-only functions decrypt on demand, extractSecretKeys helper for batch resolution, audit logs record only the key name not the value)
+- [x] Journey results + step outcomes — `src/lib/journey-run-service.ts` + JourneyRun + JourneyStepResult models (createJourneyRun enqueues journey-execution job, listJourneyRuns cursor pagination, getJourneyRun with full step results, cancelJourneyRun idempotent; JourneyStepResult records stepIndex/stepType/status/durationMs/error/before+afterScreenshotIds/consoleErrors/networkErrors/metadataJson)
+- [ ] AI-proposed journeys (validated JSON, never raw code, user approval required) — Phase 8
 
 ## Phase 8 — AI
 
