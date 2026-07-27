@@ -56,14 +56,14 @@
 - [x] IP validation (loopback/private/link-local/multicast/CGNAT/reserved/doc/metadata)
 - [x] DNS rebinding protection (resolve → record → re-resolve → abort on change)
 - [x] Redirect policy (max 10, revalidate, record blocked)
-- [ ] Scan authorization guard (workspace + domain verified + subscription + user confirm + env enabled + SSRF)
+- [x] Scan authorization guard (workspace + domain verified + subscription + user confirm + env enabled + SSRF) — `src/lib/scan-auth.ts` (7 gates: membership/permission, project ACTIVE, environment enabled + scanMode compat, subscription ACTIVE/TRIALING, usage quota, verified-domain origin allowlist, SSRF + DNS rebinding; plus `revalidateTargetBeforeFetch` for fetch-time rebinding defense)
 - [x] Queues (`scan-orchestration`, `page-analysis`, `journey-execution`, `artifact-processing`, `ai-enrichment`, `report-generation`, `email`, `webhooks`, `maintenance`)
-- [ ] Worker mini-service (`mini-services/worker`, port 3003)
-- [ ] Playwright launch policy (no `--no-sandbox` by default, block SW persistence, block clipboard/camera/mic/geolocation/notifications)
-- [ ] Network interception (allowed origins, blocked IPs, max response size, timeout, blocked protocols, redirect revalidation, header stripping)
-- [ ] Crawl engine (depth, max pages, normalize, fragment drop, query dedup, logout/destructive avoidance, per-page/total timeout, redirect chain, title, lang, dir)
-- [ ] Artifact storage (private, signed URLs, MIME, size limit, retention)
-- [ ] SSE `/api/v1/runs/:runId/events` (auth, authorize workspace, heartbeat, reconnect with event ID)
+- [x] Worker mini-service (`mini-services/worker`, port 3003) — `mini-services/worker/src/index.ts` (Bun.serve HTTP API + queue poller, health/status endpoints, graceful shutdown, --hot reload)
+- [x] Playwright launch policy (no `--no-sandbox` by default, block SW persistence, block clipboard/camera/mic/geolocation/notifications) — `mini-services/worker/src/browser.ts` (21 hardened args, serviceWorkers:'block', acceptDownloads:false, permissions:[], clearPermissions, webrtc IP handling disable, --webrtc-ip-handling-policy=disable_non_proxied_udp)
+- [x] Network interception (allowed origins, blocked IPs, max response size, timeout, blocked protocols, redirect revalidation, header stripping) — `mini-services/worker/src/browser.ts` createContext (7 checks: protocol, origin allowlist, DNS resolve + blocked IP, cross-origin cookie/auth stripping, non-safe method block, sanitized headers, context-level timeout)
+- [x] Crawl engine (depth, max pages, normalize, fragment drop, query dedup, logout/destructive avoidance, per-page/total timeout, redirect chain, title, lang, dir) — `mini-services/worker/src/crawl.ts` (BFS queue, 38 destructive URL patterns multilingual, same-origin link discovery, canonical capture, console+page error capture, screenshot+HTML artifact capture)
+- [x] Artifact storage (private, signed URLs, MIME, size limit, retention) — `src/lib/artifact-service.ts` (HMAC-SHA256 signed URLs, magic-byte MIME sniffing, allowlist per type, SHA-256 hash, path-traversal guard, retention expiry, cleanup helper)
+- [x] SSE `/api/v1/runs/:runId/events` (auth, authorize workspace, heartbeat, reconnect with event ID) — `src/app/api/v1/runs/[runId]/events/route.ts` (Last-Event-ID replay, 15s heartbeat, in-process pub/sub + 1s DB polling fallback, 30min max lifetime, stream.end on terminal events)
 
 ## Phase 5 — Analyzers
 

@@ -1,0 +1,6 @@
+{
+  "consoleErrors": [],
+  "pageErrors": [
+    "goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/demo-target\nCall log:\n  - navigating to \"http://localhost:3000/demo-target\", waiting until \"domcontentloaded\"\n"
+  ]
+}

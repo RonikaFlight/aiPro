@@ -59,6 +59,13 @@ export class RateLimitError extends AppError {
   }
 }
 
+export class PaymentRequiredError extends AppError {
+  constructor(message = 'Payment required') {
+    super(message, 402, 'payment_required', 'https://proofpilot.app/problems/payment-required')
+    this.name = 'PaymentRequiredError'
+  }
+}
+
 export interface ProblemDetails {
   type: string
   title: string
