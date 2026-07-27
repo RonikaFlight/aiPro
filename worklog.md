@@ -945,3 +945,27 @@ Stage Summary:
 - No schema changes needed (ReportApproval model already existed).
 - Phase 9 is now FULLY COMPLETE. All 6 items checked: technical report, client report, white-label, secure sharing, PDF export, approval workflow.
 - Next incomplete item: Phase 10 — Product UI (public pages, authenticated pages, admin pages, design system, dashboards).
+
+---
+Task ID: 15 (Product UI — Public Pages + Design System + Dashboard)
+Agent: main (Z.ai Code)
+Task: Phase 10 — Design system, public landing page, main dashboard.
+
+Work Log:
+- Created `src/components/theme-provider.tsx`: wraps next-themes ThemeProvider for light/dark mode support.
+- Updated `src/app/layout.tsx`: replaced Z.ai scaffold metadata with ProofPilot branding; added ThemeProvider wrapping children + Toaster; proper description, keywords, OpenGraph.
+- Rewrote `src/app/globals.css`: replaced default gray primary with emerald/green oklch primary color scheme for both light and dark themes; added --success and --warning CSS variables; consistent warm-neutral tones.
+- Created `src/components/landing/ThemeToggle.tsx`: client component using next-themes useTheme(); Sun/Moon icons with CSS rotation transition; ghost Button variant.
+- Created `src/components/landing/Navbar.tsx`: client component with sticky glass-effect header (bg-background/80 backdrop-blur-sm); ShieldCheck logo + "ProofPilot" text; desktop nav with anchor links (#features, #pricing, #security); ThemeToggle + Sign in / Get started buttons; mobile hamburger using Sheet (shadcn/ui) sliding from right with SheetClose on all links.
+- Created `src/components/landing/Footer.tsx`: server component with 4-column responsive grid (Product, Company, Legal, Connect); bottom bar with ShieldCheck + copyright + tagline; mt-auto sticky footer.
+- Rewrote `src/app/page.tsx` (446 lines): comprehensive SaaS marketing landing page as server component with 8 sections: Hero (badge pill, H1 "Automated QA for AI-Built Web Apps", CTA buttons, trust text), Social Proof (4 placeholder logo badges), How It Works (3 steps with numbered badges: Globe/Play/FileText), Features Grid (8 cards: Accessibility/Responsive/RTL/Runtime/Security/Journey/AI Insights/Reports with Lucide icons), For Teams (3 columns: Agencies/AI Builders/QA Engineers), Pricing (3 tiers Free/Pro($49)/Agency($199) with Popular badge on Pro), Security Trust (4 cards: SSRF/DNS Rebinding/Encrypted Secrets/Audit Trail), CTA ("Ready to Ship with Confidence?").
+- Rewrote `src/app/app/page.tsx` (263 lines): polished authenticated dashboard with sticky glass-effect nav (logo, Dashboard/Projects/Findings/Reports tabs, user avatar + sign out); welcome header with user name; 4 stat cards (Projects/Runs/Open Findings/Avg Score); workspace grid with role Badge + latest run status + relative time; recent activity list (10 latest runs with color-coded status badges); empty states for no workspaces and no runs; relativeTime and statusColor helper functions.
+- Lint: 0 new errors (pre-existing baseline: 4 errors + 2 warnings unchanged).
+- Dev server: `/` compiled successfully with 200 in 7.9s; server process subsequently died due to webpack OOM (known sandbox limitation).
+
+Stage Summary:
+- New files: src/components/theme-provider.tsx, src/components/landing/ThemeToggle.tsx, src/components/landing/Navbar.tsx, src/components/landing/Footer.tsx
+- Rewritten files: src/app/layout.tsx (ProofPilot metadata + ThemeProvider), src/app/globals.css (emerald/green theme), src/app/page.tsx (marketing landing), src/app/app/page.tsx (dashboard)
+- Design system foundation: light/dark theme, emerald primary, glass-effect navbar, responsive mobile Sheet menu, theme toggle, 4-column footer, status color coding.
+- Phase 10 items completed: Public pages (`/` landing), Main dashboard (`/app`).
+- Remaining Phase 10: Authenticated sub-pages (workspaces, projects, runs, findings, journeys, etc.), Admin pages, Project dashboard, Run details, Findings table, Persian/RTL UI, remaining design system components (skeletons, data tables, pagination).

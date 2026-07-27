@@ -161,4 +161,4 @@ The deployed app is previewed via the **Preview Panel** on the right of the inte
 
 ---
 
-_Last updated: Phase 9 Reports — Approval workflow complete. Phase 9 fully done. `src/lib/reports/approval-service.ts` (submitForApproval/approveReport/rejectReport/listApprovals/getApprovalStatus; state machine DRAFT→PENDING_APPROVAL→READY/DRAFT; reports.approve permission for OWNER+ADMIN; reports.read added to MEMBER/VIEWER/CLIENT) + 4 API routes (submit-approval/approve/reject/approvals) + permissions.ts updated. Next incomplete item: Phase 10 — Product UI (line 126)._
+_Last updated: Phase 10 — Public pages + design system + main dashboard. Emerald/green primary theme in globals.css. ThemeProvider (next-themes) in root layout. Landing page at `/` with 8 sections (hero, social proof, how-it-works, features grid, teams, pricing, security, CTA). Navbar with glass-effect + mobile Sheet. ThemeToggle. Footer 4-column grid. `/app` dashboard rewritten with stat cards, workspace grid, recent activity. Next incomplete: remaining Phase 10 items (authenticated pages, admin pages, project dashboard, run details, findings table)._
