@@ -50,6 +50,7 @@ model User {
   findingSuppressions      FindingSuppression[]   @relation("FindingSuppressionCreator")
   reports                  Report[]
   reportApprovals          ReportApproval[]
+  reportSharesCreated      ReportShare[]            @relation("ShareCreator")
   journeysCreated          Journey[]              @relation("JourneyCreator")
   projectSecretsCreated    ProjectSecret[]        @relation("ProjectSecretCreator")
   apiKeys                  ApiKey[]
@@ -913,11 +914,14 @@ model ReportShare {
   revokedAt       DateTime?
   viewCount       Int      @default(0)
   lastViewedAt    DateTime?
+  createdById     String?
   createdAt       DateTime @default(now())
 
   report          Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("ShareCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([reportId])
+  @@index([createdById])
 }
 
 model ReportApproval {

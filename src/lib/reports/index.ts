@@ -39,3 +39,27 @@ export {
   type UpdateWhiteLabelInput,
   type UpdateWhiteLabelResult,
 } from './white-label'
+
+export {
+  createShare,
+  verifyShareAccess,
+  resolveShareInfo,
+  revokeShare,
+  getShare,
+  listShares,
+  generateSignedArtifactUrl,
+  verifySignedArtifactUrl,
+  SHARE_TOKEN_BYTES,
+  SIGNED_ARTIFACT_EXPIRY_MINUTES,
+  MAX_SHARES_PER_REPORT,
+  type ShareType,
+  type ShareAccessStatus,
+  type CreateShareOptions,
+  type CreateShareResult,
+  type ShareAccessOptions,
+  type ShareAccessResult,
+  type ShareAccessDenied,
+  type ShareDetails,
+  type ListSharesResult,
+  type SignedArtifactParams,
+} from './secure-sharing'

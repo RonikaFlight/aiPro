@@ -853,3 +853,34 @@ Stage Summary:
 - Modified files: prisma/schema.prisma (3 new columns), src/lib/reports/technical-report.ts (types + queries), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
 - Schema migration applied via db:push.
 - Remaining Phase 9: secure sharing, PDF export, approval workflow.
+
+---
+Task ID: 12 (Secure Sharing)
+Agent: main (Z.ai Code)
+Task: Phase 9 — Secure sharing: high-entropy token hashed, optional password/expiration/email restriction, revoke, view audit, noindex, no workspace nav, signed artifact access.
+
+Work Log:
+- Updated Prisma schema: added `createdById String?` column to ReportShare model with `@relation("ShareCreator")` to User and `@@index([createdById])`; added `reportSharesCreated ReportShare[]` relation to User model. Pushed via `bun run db:push`.
+- Created `src/lib/reports/secure-sharing.ts` (~350 lines): comprehensive secure sharing service with 7 functions + full type hierarchy.
+  - `createShare(opts)`: validates run ownership, password ≥8 chars, email format, future expiration; ensures Report record for run+type via findOrCreateReportId; generates 256-bit randomToken → SHA-256 hash; optional Argon2id passwordHash; max 20 active shares per report; audit REPORT_SHARE_CREATE; returns plaintext token only once.
+  - `verifyShareAccess(token, opts)`: hashes token → findUnique by tokenHash; checks revokedAt, expiresAt, emailRestriction (case-insensitive), passwordHash (Argon2id); returns typed ShareAccessDenied or ShareAccessResult; increments viewCount+lastViewedAt on success; generates report on-the-fly (TECHNICAL or CLIENT).
+  - `resolveShareInfo(token)`: lightweight metadata lookup without full report generation.
+  - `revokeShare(shareId, workspaceId, userId)`: validates workspace ownership, sets revokedAt, records audit REPORT_SHARE_REVOKE.
+  - `getShare(shareId, workspaceId)`: workspace-scoped share detail with createdBy info.
+  - `listShares(runId, workspaceId)`: finds all Reports for run+workspace, maps types, lists all ReportShares.
+  - `generateSignedArtifactUrl(artifactId, shareToken, expiresInMinutes)`: HMAC-SHA256 signature using SESSION_SECRET-derived key, default 60min expiry.
+  - `verifySignedArtifactUrl(...)`: timing-safe comparison + expiry check.
+  - Types: ShareType, ShareAccessStatus, CreateShareOptions/Result, ShareAccessOptions/Result, ShareAccessDenied, ShareDetails, ListSharesResult, SignedArtifactParams.
+- Created 4 API routes:
+  - `POST /api/v1/runs/[runId]/share` (src/app/api/v1/runs/[runId]/share/route.ts): permission runs.read, CSRF, Zod body schema (shareType required, password min 8, expiresAt datetime, emailRestriction email), returns shareId+plaintext token+hasPassword+expiresAt+emailRestriction+createdAt.
+  - `GET /api/v1/runs/[runId]/shares` (src/app/api/v1/runs/[runId]/shares/route.ts): permission runs.read, returns all shares for a run with createdBy+viewCount+revokedAt details.
+  - `DELETE /api/v1/report-shares/[shareId]` (src/app/api/v1/report-shares/[shareId]/route.ts): permission runs.read, CSRF, revokes share, returns success+revokedAt.
+  - `GET /api/v1/shares/[token]` (src/app/api/v1/shares/[token]/route.ts): PUBLIC endpoint (no auth required), X-Robots-Tag:noindex, Cache-Control:no-store, query params ?password=&email= for gated access, returns share metadata + full TechnicalReport or ClientFacingReport on success, or 403/404 with typed status+message on denial.
+- Updated `src/lib/reports/index.ts` barrel exports with all secure-sharing types and functions.
+- Lint: 0 new errors (pre-existing baseline: 4 errors + 2 warnings unchanged).
+
+Stage Summary:
+- New files: src/lib/reports/secure-sharing.ts, src/app/api/v1/runs/[runId]/share/route.ts, src/app/api/v1/runs/[runId]/shares/route.ts, src/app/api/v1/report-shares/[shareId]/route.ts, src/app/api/v1/shares/[token]/route.ts
+- Modified files: prisma/schema.prisma (ReportShare + User relations), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
+- Schema migration applied via db:push.
+- Remaining Phase 9: PDF export, approval workflow.
