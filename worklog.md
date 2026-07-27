@@ -801,3 +801,30 @@ Stage Summary:
 - New files: src/lib/ai/circuit-breaker.ts, src/lib/ai/cost-controls.ts
 - Modified files: src/lib/env.ts, src/lib/ai/run-task.ts, src/lib/ai/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
 - No new lint errors. Next phase: Phase 9 Reports.
+
+---
+Task ID: 11
+Agent: main (Z.ai Code)
+Task: Phase 9 — Technical report + Client-facing report
+
+Work Log:
+- Read IMPLEMENTATION_CHECKLIST.md: first incomplete items were "Technical report" and "Client report" (Phase 9, lines 117-118).
+- Studied spec §21.1 (technical report: metadata, env, profile, pages, journeys, browsers, viewports, locales, findings by severity, evidence, perf, a11y, runtime errors, blocked checks, limitations) and §21.2 (client report: branding, customer, project, exec summary, quality score, tests completed, critical/resolved/remaining, delivery readiness, approval area, limitations).
+- Studied Prisma schema: ScanRun (configSnapshot, score, previousScore, aiSummaryJson, aiClientReportJson, aiSemanticGroupingJson), ScanPage+ScanPageMetric (Core Web Vitals), Finding (aiExplanation, aiRemediation, businessImpact, domSelector), FindingOccurrence (evidence, screenshotArtifactId), JourneyRun+JourneyStepResult, NetworkRequest (blocked), Artifact, ProjectEnvironment, Project, Workspace (brandName/logoUrl/accentColor/brandIntro/brandFooter).
+- Created `src/lib/reports/technical-report.ts`: ~1090 lines.
+  - `generateTechnicalReport(runId, workspaceId)`: loads ScanRun+project+workspace+environment; parses configSnapshot; queries ScanPage with metrics, Finding with occurrences, JourneyRun with JourneyStepResult, blocked NetworkRequests; aggregates findings by severity/category/status; identifies a11y-specific findings; computes Core Web Vitals avg/worst/slowest-page; counts console/network errors from journey steps; builds limitations list (partial analysis, auth restriction, single browser, no RTL, no journeys, cancelled/failed).
+  - `generateClientFacingReport(runId, workspaceId)`: wraps technical report; loads aiClientReportJson for deliveryReadiness/positiveNotes/attentionItems; strips internal details; adds workspace branding; builds client-safe limitations; returns ClientFacingReport with branding/executive/quality/issues/limitations sections.
+  - Full type hierarchy: TechnicalReport, ReportMeta, ReportRun, ReportProject, ReportEnvironment, ReportConfig, ReportPage, ReportJourney, ReportJourneyStep, ReportFindings, ReportFinding, ReportSemanticGroup, ReportPerformance, ReportAccessibility, ReportErrors, ClientFacingReport, ClientBranding, ClientExecutive, ClientQuality, ClientIssues, ClientIssue.
+  - Internal helpers: isAccessibilityCategory, computeAverageMetrics, computeWorstMetrics.
+- Created `src/lib/reports/index.ts`: barrel exports.
+- Created `GET /api/v1/runs/[runId]/technical-report` (permission runs.read).
+- Created `GET /api/v1/runs/[runId]/client-facing-report` (permission runs.read).
+- Updated IMPLEMENTATION_CHECKLIST.md: marked Technical report and Client report as [x].
+- Updated PROJECT_MEMORY.md: "Last updated" section rewritten.
+- Ran bun run lint: 0 new errors (4 pre-existing errors in auth-service.ts/db.ts/route-helpers.ts unchanged).
+
+Stage Summary:
+- New files: src/lib/reports/technical-report.ts, src/lib/reports/index.ts, src/app/api/v1/runs/[runId]/technical-report/route.ts, src/app/api/v1/runs/[runId]/client-facing-report/route.ts
+- Modified files: IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
+- Both technical and client-facing reports implemented in a single service file with comprehensive type hierarchy.
+- Remaining Phase 9: white-label, secure sharing, PDF export, approval workflow.
