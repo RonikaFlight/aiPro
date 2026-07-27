@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2 } from 'lucide-react'
+import { OAuthButtons } from '@/components/auth/oauth-buttons'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -91,6 +92,7 @@ export default function RegisterPage() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+            <OAuthButtons redirectTarget="/app" />
             <div className="space-y-2">
               <Label htmlFor="name">Name (optional)</Label>
               <Input

@@ -142,6 +142,31 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+// OAuth flow state — single-use, expiring, anti-CSRF + anti-replay.
+// - `stateHash`: SHA-256 of the raw `state` token (state appears in URLs and
+//   logs, so we hash it at rest).
+// - `codeVerifier`: the raw PKCE code_verifier (256-bit random, base64url).
+//   Stored raw because (a) it is single-use, (b) it expires in 10 minutes,
+//   (c) it is only useful alongside our client_secret (env, not in DB), and
+//   (d) we need the raw value at token-exchange time. Redeeming an auth code
+//   requires the auth code + redirect_uri + code_verifier + client_secret —
+//   leaking the verifier alone is insufficient. See SECURITY_MODEL.md §"OAuth".
+model OAuthState {
+  id                String    @id @default(cuid())
+  stateHash         String    @unique
+  codeVerifier      String
+  provider          String    // "google" | "github"
+  redirectTarget    String?   // post-login path (e.g. "/app")
+  ipHash            String?
+  userAgentSummary  String?
+  createdAt         DateTime  @default(now())
+  expiresAt         DateTime
+  usedAt            DateTime?
+
+  @@index([provider])
+  @@index([expiresAt])
+}
+
 // ===========================================================
 // Tenancy
 // ===========================================================

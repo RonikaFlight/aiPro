@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2 } from 'lucide-react'
+import { OAuthButtons } from '@/components/auth/oauth-buttons'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,6 +18,29 @@ export default function LoginPage() {
   const [csrfToken, setCsrfToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Surface OAuth callback errors (e.g. user denied consent, state invalid).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const err = params.get('error')
+    if (err) {
+      const provider = params.get('provider') ?? 'provider'
+      const messages: Record<string, string> = {
+        provider_error: `${provider} did not authorize the request. Please try again.`,
+        missing_code_or_state: 'The OAuth callback was missing required parameters. Please try again.',
+        invalid_state: 'The OAuth state token was invalid or expired. Please try again.',
+        account_conflict: 'This provider account is already linked to another ProofPilot user.',
+        account_suspended: 'This account is suspended or deleted.',
+        email_not_verified: 'The provider did not return a verified email address.',
+        not_configured: 'This sign-in method is not configured on the server.',
+        unknown_provider: 'Unknown sign-in provider.',
+        internal_error: 'An unexpected error occurred during sign-in. Please try again.',
+      }
+      setError(messages[err] ?? `Sign-in failed: ${err}`)
+      // Clean the URL so the error doesn't persist on refresh.
+      window.history.replaceState({}, '', '/login')
+    }
+  }, [])
 
   useEffect(() => {
     fetch('/api/v1/csrf').then(r => r.json()).then(d => setCsrfToken(d.csrfToken))
@@ -67,6 +91,7 @@ export default function LoginPage() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+            <OAuthButtons redirectTarget="/app" />
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input

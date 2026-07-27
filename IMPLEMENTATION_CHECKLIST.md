@@ -24,8 +24,8 @@
 - [x] Logout (revokes session)
 - [x] Forgot password (no email existence leak)
 - [x] Password reset (hashed, single-use tokens)
-- [ ] Google OAuth (Authorization Code + PKCE) — adapter scaffolded, not wired
-- [ ] GitHub OAuth — adapter scaffolded, not wired
+- [x] Google OAuth (Authorization Code + PKCE) — `src/lib/oauth/google.ts` (GoogleOAuthProvider: scopes openid/email/profile, code_challenge S256, prompt=select_account, access_type=online; exchangeCode via oauth2.googleapis.com/token; fetchProfile via openidconnect.googleapis.com/v1/userinfo; validates sub+email+email_verified)
+- [x] GitHub OAuth — `src/lib/oauth/github.ts` (GitHubOAuthProvider: scopes read:user/user:email, code_challenge S256; exchangeCode via github.com/login/oauth/access_token with Accept:json; fetchProfile via api.github.com/user + api.github.com/user/emails to resolve primary+verified email)
 - [x] TOTP MFA setup + confirm + challenge
 - [x] Recovery codes (10, hashed)
 - [x] Sessions list / revoke one / revoke others
