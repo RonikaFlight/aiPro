@@ -911,3 +911,37 @@ Stage Summary:
 - Modified files: package.json (pdfkit + @types/pdfkit), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
 - No schema changes needed.
 - Remaining Phase 9: approval workflow.
+
+---
+Task ID: 14 (Approval Workflow)
+Agent: main (Z.ai Code)
+Task: Phase 9 — Approval workflow: submit, approve, reject reports with state machine, permissions, audit trail.
+
+Work Log:
+- Added `reports.approve` permission to permissions.ts for OWNER and ADMIN roles.
+- Added `reports.read` permission to MEMBER, VIEWER, and CLIENT roles (was only on CLIENT before).
+- Created `src/lib/reports/approval-service.ts` (~300 lines):
+  - `submitForApproval`: transitions DRAFT/READY → PENDING_APPROVAL, requires reports.create permission, records audit REPORT_SUBMIT_APPROVAL.
+  - `approveReport`: transitions PENDING_APPROVAL → READY, creates ReportApproval (approved=true), requires reports.approve, prevents duplicate decisions, records audit REPORT_APPROVE.
+  - `rejectReport`: transitions PENDING_APPROVAL → DRAFT, creates ReportApproval (approved=false), requires comment (min 1 char, max 2000), requires reports.approve, records audit REPORT_REJECT.
+  - `listApprovals`: cursor-paginated with approver name/email, max 50 per page.
+  - `getApprovalStatus`: summary with approvalCount, rejectionCount, isApproved, and all decisions.
+  - State machine: DRAFT → PENDING_APPROVAL → READY (approved) or DRAFT (rejected).
+  - Max 50 approvals per report, max 2000-char comments, prevents same-user duplicate decisions.
+- Created 4 API routes:
+  - `POST /api/v1/reports/[reportId]/submit-approval` — CSRF, reports.create permission, returns reportId+status.
+  - `POST /api/v1/reports/[reportId]/approve` — CSRF, reports.approve permission, optional comment (Zod), returns approvalId+reportId+status+approved+comment.
+  - `POST /api/v1/reports/[reportId]/reject` — CSRF, reports.approve permission, required comment (Zod min 1 char), returns approvalId+reportId+status+approved+comment.
+  - `GET /api/v1/reports/[reportId]/approvals` — reports.read permission, cursor pagination (?limit=1-50&cursor=cuid), returns decisions+totalCount+nextCursor.
+- Updated `src/lib/reports/index.ts` barrel exports with all approval-service types and functions.
+- Updated IMPLEMENTATION_CHECKLIST.md: marked "Approval workflow" as [x] with detailed description.
+- Updated PROJECT_MEMORY.md: "Last updated" section.
+- Lint: 0 new errors (pre-existing baseline: 4 errors + 2 warnings unchanged).
+- Dev server verified: health/ready endpoint returns 200 with {"status":"ready","database":"ok"}; full page compilation hits sandbox memory limits (known limitation from prior sessions).
+
+Stage Summary:
+- New files: src/lib/reports/approval-service.ts, src/app/api/v1/reports/[reportId]/submit-approval/route.ts, src/app/api/v1/reports/[reportId]/approve/route.ts, src/app/api/v1/reports/[reportId]/reject/route.ts, src/app/api/v1/reports/[reportId]/approvals/route.ts
+- Modified files: src/lib/permissions.ts (reports.approve for OWNER+ADMIN, reports.read for MEMBER+VIEWER), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md, .env (added SESSION_SECRET, CSRF_SECRET, PROOFPILOT_ENCRYPTION_KEY, APP_ENV, NODE_ENV, APP_URL, STRIPE_DEV_MODE)
+- No schema changes needed (ReportApproval model already existed).
+- Phase 9 is now FULLY COMPLETE. All 6 items checked: technical report, client report, white-label, secure sharing, PDF export, approval workflow.
+- Next incomplete item: Phase 10 — Product UI (public pages, authenticated pages, admin pages, design system, dashboards).

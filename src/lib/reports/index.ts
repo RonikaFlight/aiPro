@@ -70,3 +70,20 @@ export {
   type GeneratePdfOptions,
   type GeneratePdfResult,
 } from './pdf-export'
+
+export {
+  submitForApproval,
+  approveReport,
+  rejectReport,
+  listApprovals,
+  getApprovalStatus,
+  type ReportStatusType,
+  type ApprovalDecision,
+  type ApprovalStatus,
+  type SubmitApprovalOptions,
+  type SubmitApprovalResult,
+  type ApprovalActionOptions,
+  type ApprovalActionResult,
+  type ListApprovalsOptions,
+  type ListApprovalsResult,
+} from './approval-service'

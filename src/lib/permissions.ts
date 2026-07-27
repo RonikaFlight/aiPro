@@ -29,6 +29,8 @@ export type Permission =
   | 'journeys.create'
   | 'journeys.update'
   | 'reports.create'
+  | 'reports.read'
+  | 'reports.approve'
   | 'reports.publish'
   | 'billing.read'
   | 'billing.manage'
@@ -52,7 +54,7 @@ const WORKSPACE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     'runs.create', 'runs.cancel', 'runs.read',
     'findings.read', 'findings.update',
     'journeys.create', 'journeys.update',
-    'reports.create', 'reports.publish',
+    'reports.create', 'reports.read', 'reports.approve', 'reports.publish',
     'billing.read', 'billing.manage',
     'integrations.manage',
     'audit.read',
@@ -65,7 +67,7 @@ const WORKSPACE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     'runs.create', 'runs.cancel', 'runs.read',
     'findings.read', 'findings.update',
     'journeys.create', 'journeys.update',
-    'reports.create', 'reports.publish',
+    'reports.create', 'reports.read', 'reports.approve', 'reports.publish',
     'billing.read',
     'integrations.manage',
     'audit.read',
@@ -78,7 +80,7 @@ const WORKSPACE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     'runs.create', 'runs.cancel', 'runs.read',
     'findings.read', 'findings.update',
     'journeys.create', 'journeys.update',
-    'reports.create',
+    'reports.create', 'reports.read',
     'billing.read',
     'audit.read',
   ],
@@ -88,6 +90,7 @@ const WORKSPACE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     'projects.read',
     'runs.read',
     'findings.read',
+    'reports.read',
     'billing.read',
   ],
   CLIENT: [
@@ -95,7 +98,7 @@ const WORKSPACE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     'projects.read',
     'runs.read',
     'findings.read',
-    'reports.read' as Permission,
+    'reports.read',
   ],
 }
 
