@@ -143,8 +143,9 @@ export async function handleScanOrchestration(job: Job<ScanOrchestrationPayload>
   }
 
   let totalPages = 0
-  let totalFindings = 0
-  let totalBlockers = 0
+  // Note: totalFindings/totalBlockers are now tracked by the page-analysis handler
+  // (which increments the run's findingsCount atomically as each page is analyzed).
+  // The orchestrator only tracks pages discovered here.
 
   try {
     // We crawl per-viewport (multiple viewports produce multiple passes)
@@ -186,68 +187,12 @@ export async function handleScanOrchestration(job: Job<ScanOrchestrationPayload>
         totalPages++
       }
 
-      // Findings from page errors + console errors (Phase 5 will add real analyzers)
-      for (const page of result.pages) {
-        for (const err of page.pageErrors) {
-          await createFinding({
-            runId,
-            workspaceId,
-            projectId,
-            pageUrl: page.normalizedUrl,
-            normalizedPageUrl: page.normalizedUrl,
-            checkId: 'runtime.uncaught_error',
-            category: 'RUNTIME',
-            severity: 'MAJOR',
-            title: 'Uncaught page error',
-            description: err,
-            viewport: viewport.name,
-            locale,
-          })
-          totalFindings++
-        }
-        for (const ce of page.consoleErrors) {
-          await createFinding({
-            runId,
-            workspaceId,
-            projectId,
-            pageUrl: page.normalizedUrl,
-            normalizedPageUrl: page.normalizedUrl,
-            checkId: 'runtime.console_error',
-            category: 'RUNTIME',
-            severity: 'MINOR',
-            title: 'Console error',
-            description: ce.text,
-            viewport: viewport.name,
-            locale,
-          })
-          totalFindings++
-        }
-        // Missing <html lang> — minor a11y/SEO issue
-        if (!page.lang) {
-          await createFinding({
-            runId,
-            workspaceId,
-            projectId,
-            pageUrl: page.normalizedUrl,
-            normalizedPageUrl: page.normalizedUrl,
-            checkId: 'a11y.missing_html_lang',
-            category: 'ACCESSIBILITY',
-            severity: 'MINOR',
-            title: 'Missing html[lang] attribute',
-            description: 'The <html> element has no lang attribute, which harms screen reader pronunciation and SEO.',
-            viewport: viewport.name,
-            locale,
-          })
-          totalFindings++
-        }
-      }
-
       await appendScanEvent(runId, 'run.analyzing', {
         pagesDiscovered: totalPages,
-        findingsDiscovered: totalFindings,
       })
 
-      // Enqueue page-analysis jobs (Phase 5 will pick these up)
+      // Enqueue page-analysis jobs with crawl-time data so analyzers can reuse it
+      // (avoids re-capturing console errors, page errors, http status, redirect chain, etc.)
       for (const page of result.pages) {
         await enqueue(
           'page-analysis',
@@ -255,40 +200,53 @@ export async function handleScanOrchestration(job: Job<ScanOrchestrationPayload>
             runId,
             workspaceId,
             projectId,
-            pageUrl: page.normalizedUrl,
+            pageUrl: page.url,
+            normalizedPageUrl: page.normalizedUrl,
             viewport: viewport.name,
             locale,
+            browser: 'chromium',
+            crawl: {
+              url: page.url,
+              normalizedUrl: page.normalizedUrl,
+              title: page.title,
+              httpStatus: page.httpStatus,
+              contentType: page.contentType,
+              redirectChain: page.redirectChain,
+              lang: page.lang,
+              dir: page.dir,
+              canonical: page.canonical,
+              consoleErrors: page.consoleErrors,
+              pageErrors: page.pageErrors,
+              html: page.html,
+            },
           },
           { workspaceId, correlationId: `${runId}:${page.normalizedUrl}`, priority: 3 },
-        ).catch(() => {
-          // Don't fail the run if enqueue fails — the crawl itself succeeded
+        ).catch((err) => {
+          logger.warn('Failed to enqueue page-analysis job', { runId, pageUrl: page.url, error: String(err) })
         })
       }
 
       await db.scanRun.update({
         where: { id: runId },
         data: {
+          // The orchestrator marks the run COMPLETED once the crawl is done.
+          // Page-analysis jobs continue running asynchronously and update
+          // pagesAnalyzed + findingsCount as they finish.
           status: 'COMPLETED',
           completedAt: new Date(),
           pagesDiscovered: totalPages,
-          pagesAnalyzed: totalPages,
-          findingsCount: totalFindings,
-          blockerCount: totalBlockers,
         },
       })
 
       await appendScanEvent(runId, 'run.completed', {
         pagesDiscovered: totalPages,
-        pagesAnalyzed: totalPages,
-        findingsCount: totalFindings,
-        blockerCount: totalBlockers,
+        pagesQueuedForAnalysis: totalPages,
         durationMs: result.durationMs,
       })
 
       logger.info('Scan orchestration completed', {
         runId,
         pages: totalPages,
-        findings: totalFindings,
         durationMs: result.durationMs,
       })
     } finally {
@@ -340,11 +298,11 @@ async function persistPage(
       dir: page.dir,
       canonical: page.canonical,
       depth: page.depth,
-      analyzedAt: new Date(),
+      analyzedAt: null, // set by the page-analysis handler when analyzers finish
     },
   })
 
-  await appendScanEvent(runId, 'page.analyzed', {
+  await appendScanEvent(runId, 'page.discovered', {
     pageId: scanPage.id,
     url: page.normalizedUrl,
     title: page.title,
@@ -421,62 +379,4 @@ async function persistPage(
   }
 }
 
-interface FindingInput {
-  runId: string
-  workspaceId: string
-  projectId: string
-  pageUrl: string
-  normalizedPageUrl?: string
-  checkId: string
-  category: string
-  severity: string
-  title: string
-  description: string
-  viewport: string
-  locale: string
-}
 
-async function createFinding(input: FindingInput): Promise<void> {
-  // Phase 6 will add proper fingerprinting + dedup. For now, just record.
-  try {
-    const { fingerprint } = await import('../../../src/lib/crypto')
-    const normalized = input.normalizedPageUrl ?? input.pageUrl
-    const fp = fingerprint([
-      input.projectId,
-      input.checkId,
-      normalized,
-      input.viewport,
-      input.locale,
-    ])
-    await db.finding.create({
-      data: {
-        runId: input.runId,
-        workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        checkId: input.checkId,
-        category: input.category,
-        severity: input.severity,
-        status: 'OPEN',
-        title: input.title,
-        description: input.description,
-        affectedUrl: input.pageUrl,
-        normalizedUrl: normalized,
-        viewport: input.viewport,
-        locale: input.locale,
-        fingerprint: fp,
-        firstSeenAt: new Date(),
-        lastSeenAt: new Date(),
-      },
-    })
-    await appendScanEvent(input.runId, 'finding.discovered', {
-      checkId: input.checkId,
-      severity: input.severity,
-      title: input.title,
-      pageUrl: input.pageUrl,
-      viewport: input.viewport,
-      locale: input.locale,
-    })
-  } catch (err) {
-    logger.warn('Failed to create finding', { runId: input.runId, checkId: input.checkId, error: String(err) })
-  }
-}

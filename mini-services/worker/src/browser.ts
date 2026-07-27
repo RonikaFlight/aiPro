@@ -235,14 +235,14 @@ export async function readResponseBody(response: { body: () => Promise<Buffer> }
 
 /**
  * Navigate to a URL with hardened settings + redirect revalidation.
- * Returns the final URL + page metadata.
+ * Returns the final URL + page metadata + response headers.
  */
 export async function navigateSafely(
   page: Page,
   url: string,
   allowedOrigins: string[],
   opts: { timeoutMs?: number; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' } = {},
-): Promise<{ finalUrl: string; title: string; lang: string | null; dir: string | null; redirectChain: string[] }> {
+): Promise<{ finalUrl: string; title: string; lang: string | null; dir: string | null; redirectChain: string[]; responseHeaders: Record<string, string>; responseStatus: number; responseContentType: string }> {
   const timeoutMs = opts.timeoutMs ?? env.WORKER_BROWSER_TIMEOUT_MS
   const waitUntil = opts.waitUntil ?? 'domcontentloaded'
 
@@ -289,7 +289,12 @@ export async function navigateSafely(
     const lang = await page.evaluate(() => document.documentElement.lang || null).catch(() => null)
     const dir = await page.evaluate(() => document.documentElement.dir || null).catch(() => null)
 
-    return { finalUrl, title, lang, dir, redirectChain }
+    // Capture response headers + status for security analysis
+    const responseHeaders = response.headers()
+    const responseStatus = response.status()
+    const responseContentType = responseHeaders['content-type'] ?? ''
+
+    return { finalUrl, title, lang, dir, redirectChain, responseHeaders, responseStatus, responseContentType }
   } finally {
     page.off('response', onResponse as never)
   }

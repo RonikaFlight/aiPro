@@ -23,6 +23,7 @@ import {
   type QueueName,
 } from '../../../src/lib/queue'
 import { handleScanOrchestration } from './orchestrator'
+import { handlePageAnalysis } from './page-analysis'
 
 const PORT = env.WORKER_PORT
 
@@ -31,18 +32,11 @@ registerHandler('scan-orchestration', handleScanOrchestration as never, {
   concurrency: env.WORKER_CONCURRENCY,
 })
 
-// page-analysis handler is a stub for Phase 5 — acknowledge + complete.
-registerHandler(
-  'page-analysis',
-  async (job) => {
-    logger.info('page-analysis job received (Phase 5 stub)', {
-      jobId: job.id,
-      payload: job.payload,
-    })
-    // Phase 5 will implement real analyzers here.
-  },
-  { concurrency: 2 },
-)
+// page-analysis handler — runs all Phase 5 analyzers (http-nav, runtime, responsive,
+// accessibility, forms, performance, security, seo) on a single page.
+registerHandler('page-analysis', handlePageAnalysis as never, {
+  concurrency: env.WORKER_CONCURRENCY,
+})
 
 // Stub for other queues so they don't pile up unprocessed — Phase 5+ will replace.
 const stubQueues: QueueName[] = ['journey-execution', 'artifact-processing', 'ai-enrichment', 'report-generation', 'email', 'webhooks', 'maintenance']
