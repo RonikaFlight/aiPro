@@ -179,7 +179,7 @@ export class MockAiProvider implements AiProvider {
             {
               groupId: `grp-${digest}`,
               label: 'Accessibility — missing labels',
-              findingIds: [],
+              findingIds: ['finding-sample-1'],
               sharedRootCause: 'Form controls lack associated label elements.',
             },
           ],

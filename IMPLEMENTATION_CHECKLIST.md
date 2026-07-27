@@ -101,7 +101,7 @@
 ## Phase 8 — AI
 
 - [x] Provider abstraction (Z.ai GLM adapter, OpenAI-compatible adapter, Mock for tests) — `src/lib/ai/` (AiProvider interface with complete/completeStructured; GlmAiProvider via z-ai-web-dev-sdk with env→.z-ai-config bridge; OpenAiCompatibleProvider via fetch to AI_BASE_URL; MockAiProvider deterministic/offline; registry with fallback-to-mock when configured provider not ready; AiError taxonomy; cost-per-1K-token table + estimateCostUsd)
-- [ ] Versioned prompts + Zod-validated structured output
+- [x] Versioned prompts + Zod-validated structured output — `src/lib/ai/prompts.ts` (8 versioned PromptDefinitions keyed `${taskType}@${version}`, getPrompt/getPromptVersion/promptVersionOf/listPrompts; co-located Zod schemas FindingExplanationSchema/RunSummarySchema/BusinessImpactSchema/RemediationSchema/JourneyProposalSchema/ClientReportSchema/SemanticGroupingSchema; shared SAFETY_PREAMBLE in every system message declaring the <<<UNTRUSTED_*>>> fence convention) + `src/lib/ai/prompt-safety.ts` (delimitUntrusted with randomized unforgeable fence, truncateForPrompt with marker, prepareUntrusted, redactPii for email/phone/cc/ssn/jwt/AWS/GitHub/Stripe/Google/Slack keys with per-rule counts, assertNoSecretRefs/containsSecretRef/assertMessageSafe guard) + `src/lib/ai/run-task.ts` (runStructuredTask/runTextTask/runTask wrapper: loads versioned prompt → asserts user message safe → provider.completeStructured/complete → records LlmUsageRow best-effort → returns validated data + promptVersion + repaired flag)
 - [ ] Finding explanations
 - [ ] Run summaries
 - [ ] Business-impact categorization

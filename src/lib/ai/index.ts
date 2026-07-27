@@ -35,3 +35,57 @@ export {
 } from './usage'
 
 export { extractJsonObject, estimateTokens } from './shared'
+
+// ---------------- Phase 8: versioned prompts + structured-output wrapper ----------------
+
+export {
+  // prompt-safety
+  delimitUntrusted,
+  truncateForPrompt,
+  prepareUntrusted,
+  redactPii,
+  assertNoSecretRefs,
+  containsSecretRef,
+  assertMessageSafe,
+  MAX_UNTRUSTED_CONTENT_CHARS,
+  type DelimitedContent,
+  type RedactionResult,
+} from './prompt-safety'
+
+export {
+  // versioned prompt registry + co-located schemas
+  getPrompt,
+  getPromptVersion,
+  promptVersionOf,
+  listPrompts,
+  isStructuredTask,
+  STRUCTURED_TASK_TYPES,
+  FindingExplanationSchema,
+  RunSummarySchema,
+  BusinessImpactSchema,
+  RemediationSchema,
+  JourneyProposalSchema,
+  ClientReportSchema,
+  SemanticGroupingSchema,
+  type PromptDefinition,
+  type FindingExplanation,
+  type RunSummary,
+  type BusinessImpactResult,
+  type Remediation,
+  type JourneyProposal,
+  type ClientReport,
+  type SemanticGrouping,
+  type DeliveryReadiness,
+  type AiConfidence,
+  type RemediationEffort,
+} from './prompts'
+
+export {
+  // structured-task wrapper
+  runStructuredTask,
+  runTextTask,
+  runTask,
+  type RunTaskBaseOptions,
+  type RunStructuredTaskResult,
+  type RunTextTaskResult,
+} from './run-task'
