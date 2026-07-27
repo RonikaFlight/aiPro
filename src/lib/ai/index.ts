@@ -110,3 +110,13 @@ export {
   type GenerateRunSummaryResult,
   type RunSummaryJobPayload,
 } from './run-summaries'
+
+// ---------------- Phase 8: business-impact categorization ----------------
+
+export {
+  generateBusinessImpacts,
+  enqueueBusinessImpacts,
+  type GenerateBusinessImpactsOptions,
+  type GenerateBusinessImpactsResult,
+  type BusinessImpactJobPayload,
+} from './business-impacts'

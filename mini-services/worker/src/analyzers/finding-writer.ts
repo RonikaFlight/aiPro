@@ -23,6 +23,7 @@ import { fingerprint } from '../../../../src/lib/crypto'
 import { resolveSeverity } from '../../../../src/lib/finding-severity'
 import { maybeAutoReopenFinding, isFindingSuppressed } from '../../../../src/lib/findings-service'
 import { enqueueFindingExplanation } from '../../../../src/lib/ai/finding-explanations'
+import { enqueueBusinessImpacts } from '../../../../src/lib/ai/business-impacts'
 import { env } from '../../../../src/lib/env'
 import type { FindingCandidate, AnalyzerContext } from './types'
 
@@ -112,6 +113,7 @@ export async function writeFindings(
           title: true,
           status: true,
           aiExplanation: true,
+          businessImpact: true,
         },
       })
 
@@ -131,13 +133,19 @@ export async function writeFindings(
           /* best-effort */
         })
 
-      // Phase 8: enqueue an AI-explanation job for findings that don't yet have
-      // one. The queue's correlationId dedup collapses concurrent enqueues for
-      // the same finding into a single job; `generateFindingExplanation` is
-      // itself idempotent (skips when aiExplanation is already set). Best-effort
-      // — never blocks the scan pipeline.
+      // Phase 8: enqueue AI-explanation + AI-business-impact jobs for
+      // findings that don't yet have them. The queue's correlationId dedup
+      // collapses concurrent enqueues for the same finding into a single job;
+      // both generate functions are themselves idempotent. Best-effort —
+      // never blocks the scan pipeline.
       if (env.FEATURE_AI_ENRICHMENT && !finding.aiExplanation) {
         await enqueueFindingExplanation(finding.id, ctx.workspaceId, {
+          projectId: ctx.projectId,
+          runId: ctx.runId,
+        })
+      }
+      if (env.FEATURE_AI_ENRICHMENT && !finding.businessImpact) {
+        await enqueueBusinessImpacts(finding.id, ctx.workspaceId, {
           projectId: ctx.projectId,
           runId: ctx.runId,
         })
