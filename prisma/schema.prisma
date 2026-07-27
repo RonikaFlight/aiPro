@@ -47,6 +47,7 @@ model User {
   findingsAssigned         Finding[]              @relation("FindingAssignee")
   findingComments          FindingComment[]
   findingStatusHistory     FindingStatusHistory[]
+  findingSuppressions      FindingSuppression[]   @relation("FindingSuppressionCreator")
   reports                  Report[]
   reportApprovals          ReportApproval[]
   apiKeys                  ApiKey[]
@@ -659,6 +660,7 @@ model FindingSuppression {
   revokedAt       DateTime?
 
   finding         Finding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  createdBy       User     @relation("FindingSuppressionCreator", fields: [createdById], references: [id])
 
   @@index([workspaceId])
   @@index([findingId])

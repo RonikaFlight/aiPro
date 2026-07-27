@@ -78,15 +78,15 @@
 
 ## Phase 6 — Findings
 
-- [ ] Finding fingerprint (projectId, checkId, normalizedUrl, normalizedSelector, viewport, locale, stableMessageKey, SHA-256)
-- [ ] Deduplication across runs/pages/viewports/locales
-- [ ] Lifecycle state machine (OPEN/ACKNOWLEDGED/IN_PROGRESS/RESOLVED/REOPENED/IGNORED/ACCEPTED_RISK/FALSE_POSITIVE) with invalid-transition rejection
-- [ ] Auto-reopen on resolved fingerprint re-appearance
-- [ ] Comments, assignments, tags
-- [ ] Suppressions (reason, creator, optional expiry, audit, narrowly scoped)
-- [ ] Severity (BLOCKER/CRITICAL/MAJOR/MINOR/INFO) — deterministic first, AI may explain but not silently override
-- [ ] Business impact categories
-- [ ] Quality score (0–100, weights, blocker caps readiness)
+- [x] Finding fingerprint (projectId, checkId, normalizedUrl, normalizedSelector, viewport, locale, stableMessageKey, SHA-256) — `src/lib/crypto.ts` fingerprint() + `mini-services/worker/src/analyzers/finding-writer.ts` (fingerprint = SHA-256 of projectId+checkId+normalizedUrl+selector+viewport+locale+messageKey, upsert on fingerprint for cross-run dedup)
+- [x] Deduplication across runs/pages/viewports/locales — `mini-services/worker/src/analyzers/finding-writer.ts` (upsert on fingerprint; FindingOccurrence records per-run appearances; isFindingSuppressed skips occurrence emission for suppressed findings)
+- [x] Lifecycle state machine (OPEN/ACKNOWLEDGED/IN_PROGRESS/RESOLVED/REOPENED/IGNORED/ACCEPTED_RISK/FALSE_POSITIVE) with invalid-transition rejection — `src/lib/finding-severity.ts` (TRANSITION_MATRIX, canTransition, assertCanTransition) + `src/lib/findings-service.ts` (transitionFinding, patchFinding validate transitions, records FindingStatusHistory)
+- [x] Auto-reopen on resolved fingerprint re-appearance — `src/lib/findings-service.ts` maybeAutoReopenFinding (only from RESOLVED; IGNORED/ACCEPTED_RISK/FALSE_POSITIVE are intentional decisions, not auto-reopened) + wired into `mini-services/worker/src/analyzers/finding-writer.ts`
+- [x] Comments, assignments, tags — `src/lib/findings-service.ts` (addComment, listComments, patchFinding for assignedToId/tags; FindingComment model, Finding.tags comma-separated with parseTags validation/dedup, max 12 tags)
+- [x] Suppressions (reason, creator, optional expiry, audit, narrowly scoped) — `src/lib/findings-service.ts` (createSuppression with 4 scopes: finding/fingerprint/checkId/project_check; project-wide requires OWNER/ADMIN; revokeSuppression idempotent; isFindingSuppressed for worker; expiry capped at 1 year; FindingSuppression.createdBy relation added)
+- [x] Severity (BLOCKER/CRITICAL/MAJOR/MINOR/INFO) — deterministic first, AI may explain but not silently override — `src/lib/finding-severity.ts` (DETERMINISTIC_SEVERITY table for 60+ (category, checkId) pairs, resolveSeverity returns {severity, overridden}; AI cannot silently override — overrides recorded via patchFinding audit)
+- [x] Business impact categories — `src/lib/finding-severity.ts` (12 BUSINESS_IMPACTS: REVENUE_LOSS, CONVERSION_LOSS, BRAND_DAMAGE, ACCESSIBILITY_BARRIER, LEGAL_COMPLIANCE, SEO_TRAFFIC_LOSS, USER_EXPERIENCE, SECURITY_EXPOSURE, PERFORMANCE_DEGRADATION, LOCALIZATION_BARRIER, TECHNICAL_DEBT, OTHER; parseBusinessImpacts/serializeBusinessImpacts)
+- [x] Quality score (0–100, weights, blocker caps readiness) — `src/lib/quality-score.ts` (computeBreakdown pure function, SEVERITY_WEIGHTS [BLOCKER=25/CRITICAL=12/MAJOR=5/MINOR=2/INFO=0], SEVERITY_MAX_PENALTY caps per bucket, open BLOCKER caps score at 49 [NOT_READY], open CRITICAL caps at 74 [NEEDS_WORK], READY requires ≥80 + no blockers/criticals; computeProjectScore live from findings table, computeAndPersistRunScore writes to ScanRun.score + previousScore + blockerCount; wired into page-analysis handler)
 
 ## Phase 7 — Journeys
 

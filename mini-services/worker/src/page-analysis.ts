@@ -18,6 +18,7 @@
 import { db } from '../../../src/lib/db'
 import { logger } from '../../../src/lib/logger'
 import { appendScanEvent } from '../../../src/lib/scan-events'
+import { computeAndPersistRunScore } from '../../../src/lib/quality-score'
 import { runPageAnalysis, parseViewport } from './analyzers'
 import type { Job } from '../../../src/lib/queue'
 import type { CrawlData } from './analyzers/types'
@@ -136,15 +137,27 @@ export async function handlePageAnalysis(job: Job<PageAnalysisPayload>): Promise
   })
 
   // Update run counters (atomically increment to avoid race conditions across pages)
-  await db.scanRun.update({
+  const updatedRun = await db.scanRun.update({
     where: { id: runId },
     data: {
       pagesAnalyzed: { increment: 1 },
       findingsCount: { increment: result.findings },
     },
+    select: { pagesAnalyzed: true, pagesDiscovered: true, status: true },
   }).catch((err) => {
     logger.warn('Failed to update run counters', { runId, error: String(err) })
+    return null
   })
+
+  // Phase 6: recompute and persist the run's quality score after each page
+  // is analyzed. This is idempotent (overwrites the previous score) and
+  // converges to the final score once all pages are analyzed.
+  let scoreBreakdown: Awaited<ReturnType<typeof computeAndPersistRunScore>> | null = null
+  try {
+    scoreBreakdown = await computeAndPersistRunScore(runId, workspaceId)
+  } catch (err) {
+    logger.warn('Failed to compute run score', { runId, error: String(err) })
+  }
 
   // Append a final analysis-completed event (per page) for SSE consumers
   await appendScanEvent(runId, 'page.analysis_completed', {
@@ -156,7 +169,29 @@ export async function handlePageAnalysis(job: Job<PageAnalysisPayload>): Promise
     analyzersRun: result.analyzersRun,
     analyzersFailed: result.analyzersFailed,
     durationMs: result.durationMs,
+    score: scoreBreakdown?.score ?? null,
   }).catch(() => {
     // best-effort
   })
+
+  // If all discovered pages have been analyzed, emit a run.scored event so
+  // SSE listeners know the final score is available.
+  if (
+    updatedRun &&
+    updatedRun.pagesAnalyzed >= updatedRun.pagesDiscovered &&
+    updatedRun.pagesDiscovered > 0 &&
+    scoreBreakdown
+  ) {
+    await appendScanEvent(runId, 'run.scored', {
+      score: scoreBreakdown.score,
+      grade: scoreBreakdown.grade,
+      readiness: scoreBreakdown.readiness,
+      hasOpenBlocker: scoreBreakdown.hasOpenBlocker,
+      hasOpenCritical: scoreBreakdown.hasOpenCritical,
+      openBySeverity: scoreBreakdown.openBySeverity,
+      totalFindings: scoreBreakdown.totalFindings,
+    }).catch(() => {
+      // best-effort
+    })
+  }
 }
