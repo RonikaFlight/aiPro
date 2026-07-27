@@ -109,6 +109,9 @@ export interface ReportProject {
     brandName: string | null
     brandIntro: string | null
     brandFooter: string | null
+    brandContactEmail: string | null
+    brandContactUrl: string | null
+    customDomain: string | null
     logoUrl: string | null
     accentColor: string | null
   }
@@ -337,6 +340,9 @@ export async function generateTechnicalReport(
               brandName: true,
               brandIntro: true,
               brandFooter: true,
+              brandContactEmail: true,
+              brandContactUrl: true,
+              customDomain: true,
               logoUrl: true,
               accentColor: true,
             },
@@ -807,6 +813,10 @@ export interface ClientBranding {
   customIntro: string | null
   /** Custom footer or null. */
   customFooter: string | null
+  /** Contact email or null. */
+  brandContactEmail: string | null
+  /** Contact URL or null. */
+  brandContactUrl: string | null
 }
 
 export interface ClientExecutive {
@@ -966,6 +976,8 @@ export async function generateClientFacingReport(
       accentColor: report.project.workspace.accentColor,
       customIntro: report.project.workspace.brandIntro,
       customFooter: report.project.workspace.brandFooter,
+      brandContactEmail: report.project.workspace.brandContactEmail,
+      brandContactUrl: report.project.workspace.brandContactUrl,
     },
     executive: {
       summary: report.run.aiSummary,

@@ -182,6 +182,9 @@ model Workspace {
   brandName       String?
   brandIntro      String?
   brandFooter     String?
+  brandContactEmail String?
+  brandContactUrl  String?
+  customDomain    String?
   retentionDays   Int      @default(30)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

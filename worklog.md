@@ -828,3 +828,28 @@ Stage Summary:
 - Modified files: IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
 - Both technical and client-facing reports implemented in a single service file with comprehensive type hierarchy.
 - Remaining Phase 9: white-label, secure sharing, PDF export, approval workflow.
+
+---
+Task ID: 12
+Agent: main (Z.ai Code)
+Task: Phase 9 — White-label configuration
+
+Work Log:
+- Read IMPLEMENTATION_CHECKLIST.md: first incomplete item was "White-label (logo, name, accent color, contact, intro, footer, custom-domain-ready)" at Phase 9, line 119.
+- Studied spec §21.3: agency plans can configure logo, organization name, report accent color, contact details, custom introduction, custom footer, custom report domain (future-ready).
+- Studied existing infrastructure: Workspace model already had logoUrl/accentColor/brandName/brandIntro/brandFooter. Plan model has whiteLabel boolean. workspace-service.ts already had updateWorkspace with branding fields but no validation or plan enforcement.
+- Added 3 new nullable String columns to Workspace model in prisma/schema.prisma: brandContactEmail, brandContactUrl, customDomain. Pushed via bun run db:push.
+- Created `src/lib/reports/white-label.ts`: getWhiteLabelSettings (loads workspace + plan.whiteLabel, returns WhiteLabelSettings with all 8 branding fields + whiteLabelEnabled flag); updateWhiteLabelSettings (plan enforcement — ForbiddenError if plan.whiteLabel is false; validates accentColor hex, brandName length, brandIntro/brandFooter max 2000 chars, brandContactEmail email format, brandContactUrl HTTPS, customDomain domain format, logoUrl HTTPS/relative; persists to Workspace; audit WHITE_LABEL_UPDATE); resetWhiteLabelSettings (clears branding except customDomain, for billing downgrade).
+- Created `GET /api/v1/workspaces/[workspaceId]/white-label` (permission workspace.update).
+- Created `PATCH /api/v1/workspaces/[workspaceId]/white-label` (permission workspace.update, CSRF, Zod body, plan-gated, returns {settings, updatedFields}).
+- Updated `src/lib/reports/technical-report.ts`: ReportProject.workspace type + DB select extended with brandContactEmail/brandContactUrl/customDomain; ClientBranding type extended with brandContactEmail/brandContactUrl; generateClientFacingReport passes new fields.
+- Updated `src/lib/reports/index.ts` barrel exports with white-label module.
+- Updated IMPLEMENTATION_CHECKLIST.md: marked White-label as [x].
+- Updated PROJECT_MEMORY.md: "Last updated" section rewritten.
+- Ran bun run lint: 0 new errors (4 pre-existing errors in auth-service.ts/db.ts/route-helpers.ts unchanged).
+
+Stage Summary:
+- New files: src/lib/reports/white-label.ts, src/app/api/v1/workspaces/[workspaceId]/white-label/route.ts
+- Modified files: prisma/schema.prisma (3 new columns), src/lib/reports/technical-report.ts (types + queries), src/lib/reports/index.ts, IMPLEMENTATION_CHECKLIST.md, PROJECT_MEMORY.md
+- Schema migration applied via db:push.
+- Remaining Phase 9: secure sharing, PDF export, approval workflow.

@@ -30,3 +30,12 @@ export {
   type ClientIssue,
   type GenerateClientFacingReportOptions,
 } from './technical-report'
+
+export {
+  getWhiteLabelSettings,
+  updateWhiteLabelSettings,
+  resetWhiteLabelSettings,
+  type WhiteLabelSettings,
+  type UpdateWhiteLabelInput,
+  type UpdateWhiteLabelResult,
+} from './white-label'
