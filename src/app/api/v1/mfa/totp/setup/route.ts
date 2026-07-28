@@ -16,8 +16,8 @@ export async function POST(request: Request) {
     assertCsrf(request)
     const auth = await requireAuth()
     const result = await beginTotpSetup(auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(result)

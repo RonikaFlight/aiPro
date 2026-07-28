@@ -992,6 +992,7 @@ model DeploymentHook {
 model OutgoingWebhook {
   id              String   @id @default(cuid())
   workspaceId     String
+  name            String
   url             String
   events          String   // comma-separated event types
   secretHash      String
@@ -1148,7 +1149,9 @@ model Notification {
   title           String
   body            String?
   link            String?
+  metadataJson    String?
   readAt          DateTime?
+  deletedAt       DateTime?
   createdAt       DateTime @default(now())
 
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)

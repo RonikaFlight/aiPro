@@ -4,6 +4,7 @@
  * Registration, login, email verification, password reset, MFA.
  * All flows use hashed tokens, single-use, expiring, no email-existence leak.
  */
+import crypto from 'crypto'
 import { db } from './db'
 import {
   hashPassword,
@@ -547,7 +548,6 @@ function generateTotp(key: Buffer, counter: number): string {
   const buf = Buffer.alloc(8)
   // Write counter as big-endian 64-bit
   buf.writeBigInt64BE(BigInt(counter), 0)
-  const crypto = require('crypto')
   const hmac = crypto.createHmac('sha1', key).update(buf).digest()
   const offset = hmac[hmac.length - 1] & 0x0f
   const truncated =

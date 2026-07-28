@@ -989,3 +989,139 @@ Stage Summary:
 - Project dashboard API returns aggregated data in single call (no client-side waterfall).
 - Dashboard UI features: grade badge, delivery readiness, score trend chart, severity/category breakdowns, blocker alerts, coverage badges, journey success rate, recent reports.
 - IMPLEMENTATION_CHECKLIST.md updated: line 131 marked complete with detailed description.
+
+---
+Task ID: 1
+Agent: full-stack-developer
+Task: Phase 10 — Run Details page + Findings Table page
+
+Work Log:
+- Read prior worklog (991 lines) and existing app pages to align on emerald-primary design system, sticky-header/mt-auto-footer pattern, and breadcrumb conventions.
+- Inspected API routes: GET /api/v1/runs/[runId] (returns RunDetail with inline events[] + configSnapshot), GET /api/v1/runs/[runId]/summary (AI summary, best-effort), DELETE /api/v1/runs/[runId] (cancel, CSRF-protected), GET /api/v1/projects/[projectId]/findings (cursor pagination + filters), GET /api/v1/projects/[projectId] (project name for breadcrumb).
+- Confirmed service return shapes: getRun returns events array inline (no need to consume SSE for static render), listFindings returns { items, nextCursor, totalApprox }.
+- Rewrote src/app/app/runs/[runId]/page.tsx as a client component:
+  · Fetches run + (for completed runs) AI summary.
+  · Stat cards: score with trend icon, pages analyzed/discovered, findings with blocker count, duration.
+  · Stage timeline from run.events[] (queued → validating → authorized → crawling → analyzing → generating_report → scored → summarized → completed), with red/gray terminal styling for failed/cancelled.
+  · Cancel button (AlertDialog-confirmed) for QUEUED/RUNNING/ANALYZING/SCORING runs — DELETE then reload.
+  · Run metadata card (trigger, mode, times, triggered-by, failure reason).
+  · Config snapshot card with human-friendly rows + pretty-printed raw JSON.
+  · AI Summary card with readiness badge, executive summary, top issues (severity-colored), recommendation.
+  · Loading skeleton + error retry + back link to /app.
+- Created src/app/app/projects/[projectId]/findings/page.tsx as a client component:
+  · Filters bar: search input (Enter-to-search, clear button), severity multi-select dropdown (colored dots, count badge), status multi-select dropdown (count badge), category single-select populated from loaded findings, sort field select + asc/desc toggle.
+  · Active-filter badges row — click any to remove; clear-all button.
+  · Table: Severity (color-coded), Title (+ mobile inline severity/category), Category, Status (color-coded), URL (truncated), First Seen, Last Seen — responsive column hiding on small screens.
+  · Cursor pagination with Previous/Next (cursor stack for back-nav).
+  · Empty state with FileX icon, distinct copy for no-filters vs filtered.
+  · Loading skeleton + error retry + back link to project dashboard.
+- Ran `npx eslint` on both new files — no errors or warnings introduced (4 pre-existing `no-require-imports` errors in unrelated lib files are not from this task).
+- Dev server log shows clean startup, no compilation errors.
+
+Stage Summary:
+- Two Phase 10 UI pages delivered following existing emerald-on-background design system.
+- Both use client-side `fetch('/api/v1/...')` only — no absolute URLs, no port numbers, no new API routes.
+- Consistent sticky header (ShieldCheck logo + breadcrumb nav), `min-h-screen flex flex-col bg-background` root, `mt-auto` footer with copyright.
+- Local `relativeTime()` helper mirrors the dashboard's implementation.
+- Severity colors: BLOCKER=red, CRITICAL=orange, MAJOR=amber, MINOR=lime, INFO=gray.
+- Status colors: OPEN/ACKNOWLEDGED/IN_PROGRESS/REOPENED=warm (red/orange/amber), RESOLVED/IGNORED/ACCEPTED_RISK/FALSE_POSITIVE=emerald.
+- Work record also saved to /home/z/my-project/agent-ctx/1-full-stack-developer.md.
+
+---
+Task ID: 4 (Lint & Code Quality Fixes)
+Agent: main (Z.ai Code)
+Task: Fix all existing lint errors and code quality issues in the codebase.
+
+Work Log:
+- Read worklog.md and identified all known lint issues from prior tasks.
+- Fixed `src/lib/auth-service.ts:550` — Replaced `require('crypto')` with a top-level `import crypto from 'crypto'` in the `generateTotp()` function. The Node.js `crypto` module was already dynamically imported at line 409 elsewhere, but the synchronous function needed a static import.
+- Fixed `src/lib/db.ts:60` — Replaced `require('./errors')` with a top-level `import { NotFoundError } from './errors'`. Verified no circular dependency (errors.ts does not import from db.ts).
+- Fixed `src/lib/route-helpers.ts:225,234` — Replaced two `require('./env')` calls with a single top-level `import { env } from './env'`. Both `setSessionCookieOnResponse()` and `clearSessionCookieOnResponse()` now use the statically imported `env`.
+- Fixed `src/app/demo-target/page.tsx:89-90` — Removed unused `// eslint-disable-next-line @typescript-eslint/no-explicit-any` directive (no `any` was used). Changed `;(window as ...).undefinedVariable?.deepProperty` to `void (window as ...).undefinedVariable?.deepProperty` to suppress the `no-unused-expressions` lint warning while preserving the intentional error-triggering behavior.
+- Additional code quality sweep: Found 44 instances of `request as any` casts across API route files. Since `getClientIp()`, `getUserAgent()`, and `readSessionCookieFromRequest()` all accept the standard `Request` type (which `NextRequest` extends), all `as any` casts were unnecessary. Removed all 44 occurrences in a batch fix. Verified zero remaining `: any` annotations or `as any` casts in source code.
+- Security checks passed: No `@ts-ignore` directives found. No `localStorage` usage for auth tokens found. No `eval()` usage found. No unjustified `any` types remain (remaining `any` occurrences are in English prose within comments/docstrings only).
+- Final `bun run lint` passes cleanly with zero errors/warnings.
+- Dev server confirmed running normally on port 3000 after all fixes.
+
+Stage Summary:
+- All 6 known lint errors/warnings resolved with minimal, targeted fixes.
+- 44 unnecessary `as any` casts cleaned up across API route handlers.
+- Zero lint errors/warnings in full project (`bun run lint` clean).
+- No regressions — dev server healthy.
+
+---
+Task ID: 3 (Phase 11 Backend Services)
+Agent: main (Z.ai Code)
+Task: Phase 11 — Backend services: notifications, retention cleanup, outgoing webhooks, scheduling.
+
+Work Log:
+- Read worklog, Prisma schema, and existing service patterns (billing, findings, workspace) to understand conventions.
+- Added `name` field to OutgoingWebhook, `metadataJson` and `deletedAt` fields to Notification in Prisma schema. Ran `db:push` to sync.
+- Created `src/lib/notification-service.ts`: createNotification, listNotifications (cursor-paginated), markNotificationRead, markAllNotificationsRead, getUnreadCount, deleteNotification (soft-delete). 9 notification types. All mutations audit-logged.
+- Created API routes: GET /api/v1/notifications, POST /api/v1/notifications/[id]/read, POST /api/v1/notifications/read-all, GET /api/v1/notifications/unread-count.
+- Created `src/lib/retention-service.ts`: runRetentionCleanup orchestrator, cleanupExpiredSessions, cleanupExpiredInvitations, cleanupOldExports, cleanupOldArtifacts. Parallel execution via Promise.all. Returns cleanup summary.
+- Created `src/lib/ssrf-guard.ts`: isPrivateUrl (async DNS lookup), isPrivateIpAddress (IPv4+IPv6). Blocks loopback, private ranges, link-local, IPv4-mapped IPv6.
+- Created `src/lib/outgoing-webhook-service.ts`: createWebhook (SSRF check, secret generation, one-time return), updateWebhook, deleteWebhook, listWebhooks, getWebhook, deliverEvent (HMAC-SHA256, X-ProofPilot-* headers), retryFailedDelivery (exponential backoff 60s/300s/900s, max 3 retries). Auto-disable after 5 consecutive failures. Max 20 webhooks per workspace.
+- Created API routes: GET/POST /api/v1/workspaces/[workspaceId]/webhooks, GET/PUT/DELETE /api/v1/webhooks/[webhookId], POST /api/v1/webhooks/[webhookId]/deliveries/[deliveryId]/retry.
+- Created `src/lib/scheduling-service.ts`: createSchedule (plan enforcement, cron validation, timezone validation, max 10/project), updateSchedule, deleteSchedule, listSchedules, getSchedule, toggleSchedule, shouldRunSchedule, recordScheduleRun, findDueSchedules. Includes 5-field POSIX cron parser with next-run computation using Intl.DateTimeFormat for timezone support.
+- Created API routes: GET/POST /api/v1/projects/[projectId]/schedules, GET/PUT/DELETE /api/v1/schedules/[scheduleId], POST /api/v1/schedules/[scheduleId]/toggle.
+- All 16 new files pass ESLint with zero errors. Full `bun run lint` clean.
+
+Stage Summary:
+- 4 service modules + 1 SSRF guard module created.
+- 11 API route files created covering all CRUD + special operations.
+- Notification: 9 types, cursor pagination, soft-delete, audit logging.
+- Retention: session/invitation/export/artifact cleanup with parallel execution.
+- Outgoing webhooks: HMAC-SHA256 signing, SSRF protection, auto-disable, retry with backoff.
+- Scheduling: 5-field cron parser, timezone-aware next-run, plan enforcement.
+---
+Task ID: 2
+Agent: main (Z.ai Code)
+Task: Phase 10 — Workspace sub-pages: Team, Audit Log, Settings.
+
+Work Log:
+- Read prior worklog (1077 lines) and existing workspace/billing pages to align on emerald-primary design system, sticky-header/mt-auto-footer pattern, and breadcrumb conventions.
+- Inspected all relevant API routes: GET /api/v1/workspaces/[workspaceId] (workspace info + plan), GET /api/v1/workspaces/[workspaceId]/members (member list with user details), GET /api/v1/workspaces/[workspaceId]/audit-logs (page/pageSize pagination), GET/PATCH /api/v1/workspaces/[workspaceId]/white-label (branding settings).
+- Noted audit-logs API uses page/pageSize pagination (not cursor) — adapted UI accordingly.
+- Discovered all audit action types from codebase (22 types) for filter dropdown.
+- Created Team page (src/app/app/workspaces/[workspaceId]/team/page.tsx): client component with member table (avatar initials, name/email, role badge, joined date), invitation form (email + role select + button, UI only), loading skeleton, error state with retry. Responsive column hiding on mobile.
+- Created Audit Log page (src/app/app/workspaces/[workspaceId]/audit/page.tsx): client component with audit table (relative timestamp, color-coded action badge, actor type, description with truncated target ID, outcome), action type filter Select, page-based pagination (prev/next), max-h-[600px] scrollable container, loading skeleton, error state with retry. Responsive column hiding.
+- Created Settings page (src/app/app/workspaces/[workspaceId]/settings/page.tsx): client component with Tabs (General, White Label, Danger Zone). General: read-only workspace details. White Label: form fields + save button calling PATCH white-label API with CSRF. Danger Zone: AlertDialog confirmation for delete workspace (button only).
+- All 3 pages share: min-h-screen flex flex-col bg-background, sticky header, breadcrumbs, mt-auto footer, emerald primary, mobile-first responsive.
+- Lint: 0 errors, 0 warnings from new files.
+- Dev server confirmed running.
+
+Stage Summary:
+- New files: src/app/app/workspaces/[workspaceId]/team/page.tsx, src/app/app/workspaces/[workspaceId]/audit/page.tsx, src/app/app/workspaces/[workspaceId]/settings/page.tsx
+- No new API routes created — used existing endpoints only.
+- No schema changes needed.
+- All three pages follow consistent design system and UX patterns established by prior Phase 10 pages.
+- Work record also saved to /home/z/my-project/agent-ctx/2-main.md.
+
+---
+Task ID: 2 (Phase 10 + 11 + Code Quality — Batch Implementation)
+Agent: main (Z.ai Code) — orchestrated 4 parallel sub-agents
+Task: Complete all remaining incomplete items across Phases 8, 10, 11, and Continuous quality
+
+Work Log:
+- Identified 30 incomplete checklist items across Phases 8, 10, 11, 12, and Continuous
+- Fixed line 99 (AI-proposed journeys) — was already implemented in journey-proposals.ts
+- Launched 4 parallel sub-agents:
+  - Agent 1 (full-stack-developer): Run Details page + Findings Table page
+  - Agent 2 (full-stack-developer): Team, Audit, Settings workspace sub-pages
+  - Agent 3 (full-stack-developer): Notification, Retention, Outgoing Webhook, Scheduling services
+  - Agent 4 (full-stack-developer): Fix lint errors + code quality
+- Agent 1 created: src/app/app/runs/[runId]/page.tsx (30KB), src/app/app/projects/[projectId]/findings/page.tsx (30KB)
+- Agent 2 created: team/page.tsx, audit/page.tsx, settings/page.tsx
+- Agent 3 created: notification-service.ts, retention-service.ts, outgoing-webhook-service.ts, ssrf-guard.ts, scheduling-service.ts + 11 API route files
+- Agent 4 fixed: 4 require()→import errors, 2 demo-target warnings, removed 44 unnecessary `as any` casts
+- Final `bun run lint`: 0 errors, 0 warnings
+- Dev server: running and compiling successfully on port 3000
+- Updated IMPLEMENTATION_CHECKLIST.md: 16 items marked complete
+
+Stage Summary:
+- New UI pages: Run Details, Findings Table, Team, Audit Log, Settings (5 pages)
+- New backend services: Notifications, Retention, Outgoing Webhooks (+ SSRF guard), Scheduling (4 services)
+- New API routes: 11 routes for notifications/webhooks/schedules
+- Code quality: all lint errors resolved, unnecessary `any` casts removed
+- 16 checklist items marked complete, 12 remaining (admin pages, deployment hooks, Slack, Persian/RTL UI, unit tests, E2E, security tests, CI/CD, Docker, docs)

@@ -53,7 +53,7 @@ export async function POST(
       auth.userId,
       membership.workspaceRole as WorkspaceRole,
       { email: body.email, role: body.role as WorkspaceRole },
-      { ip: getClientIp(request as any), userAgent: getUserAgent(request as any), requestId },
+      { ip: getClientIp(request), userAgent: getUserAgent(request), requestId },
     )
     return NextResponse.json(result, { status: 201 })
   } catch (err) {
@@ -83,7 +83,7 @@ export async function PATCH(
       membership.workspaceRole as WorkspaceRole,
       targetUserId,
       body.role as WorkspaceRole,
-      { ip: getClientIp(request as any), userAgent: getUserAgent(request as any), requestId },
+      { ip: getClientIp(request), userAgent: getUserAgent(request), requestId },
     )
     return NextResponse.json({ ok: true })
   } catch (err) {
@@ -110,7 +110,7 @@ export async function DELETE(
       auth.userId,
       membership.workspaceRole as WorkspaceRole,
       targetUserId,
-      { ip: getClientIp(request as any), userAgent: getUserAgent(request as any), requestId },
+      { ip: getClientIp(request), userAgent: getUserAgent(request), requestId },
     )
     return NextResponse.json({ ok: true })
   } catch (err) {

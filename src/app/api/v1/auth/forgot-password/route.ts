@@ -21,12 +21,12 @@ export async function POST(request: Request) {
     const body = Body.parse(JSON.parse(text || '{}'))
     const emailLower = body.email.toLowerCase()
 
-    const ip = getClientIp(request as any)
+    const ip = getClientIp(request)
     checkRateLimit('passwordReset', ip + ':' + emailLower)
 
     const { token, userId } = await requestPasswordReset(body.email, {
       ip,
-      userAgent: getUserAgent(request as any),
+      userAgent: getUserAgent(request),
       requestId,
     })
 

@@ -32,8 +32,8 @@ export async function POST(request: Request) {
     const text = await request.text()
     const body = Body.parse(JSON.parse(text || '{}'))
     const workspace = await createWorkspace(body, auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(workspace, { status: 201 })

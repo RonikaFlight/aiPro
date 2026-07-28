@@ -1,0 +1,1506 @@
+     1→/**
+     2→ * Findings service — ProofPilot (Phase 6)
+     3→ *
+     4→ * Lifecycle state machine, dedup-aware listing, comments, assignments, tags,
+     5→ * suppressions, and CSV export for findings.
+     6→ *
+     7→ * All workspace-scoped queries receive workspaceId from the authenticated
+     8→ * session context (never from the request body). Every mutation records an
+     9→ * audit-log entry; sensitive actions also record a FindingStatusHistory row.
+    10→ *
+    11→ * See:
+    12→ *   - DATABASE_DESIGN.md §"Finding"
+    13→ *   - SECURITY_MODEL.md §"Findings"
+    14→ *   - IMPLEMENTATION_CHECKLIST.md Phase 6
+    15→ */
+    16→import { db } from './db'
+    17→import { logger } from './logger'
+    18→import {
+    19→  AppError,
+    20→  ConflictError,
+    21→  ForbiddenError,
+    22→  NotFoundError,
+    23→  ValidationError,
+    24→} from './errors'
+    25→import { recordAudit, type AuditContext } from './audit'
+    26→import { appendScanEvent } from './scan-events'
+    27→import type { Prisma } from '@prisma/client'
+    28→import {
+    29→  type FindingSeverity,
+    30→  type FindingStatus,
+    31→  type BusinessImpact,
+    32→  type FindingConfidence,
+    33→  assertSeverity,
+    34→  assertStatus,
+    35→  assertCanTransition,
+    36→  canTransition,
+    37→  parseBusinessImpacts,
+    38→  serializeBusinessImpacts,
+    39→  parseTags,
+    40→  serializeTags,
+    41→  isBusinessImpact,
+    42→  OPEN_STATUSES,
+    43→} from './finding-severity'
+    44→
+    45→// ===========================================================
+    46→// Types
+    47→// ===========================================================
+    48→
+    49→export interface FindingFilters {
+    50→  projectId?: string
+    51→  runId?: string
+    52→  severity?: FindingSeverity | FindingSeverity[]
+    53→  status?: FindingStatus | FindingStatus[]
+    54→  category?: string | string[]
+    55→  locale?: string
+    56→  viewport?: string
+    57→  browser?: string
+    58→  assignedToId?: string | null
+    59→  /** "true" → only unassigned; "false" → only assigned. */
+    60→  unassigned?: boolean
+    61→  /** ISO date — only findings first seen after this. */
+    62→  firstSeenAfter?: string
+    63→  /** ISO date — only findings first seen before this. */
+    64→  firstSeenBefore?: string
+    65→  /** Free-text search on title/description/checkId. */
+    66→  search?: string
+    67→  /** "active" → exclude suppressed; "suppressed" → only suppressed; "all" (default). */
+    68→  suppression?: 'active' | 'suppressed' | 'all'
+    69→  /** Comma-separated tags — findings must have ALL of these. */
+    70→  tags?: string[]
+    71→}
+    72→
+    73→export interface ListFindingsOptions {
+    74→  limit: number
+    75→  cursor?: string
+    76→  /** Sort field. Defaults to lastSeenAt desc. */
+    77→  sort?: 'lastSeenAt' | 'firstSeenAt' | 'severity' | 'title'
+    78→  order?: 'asc' | 'desc'
+    79→}
+    80→
+    81→export interface FindingDetail {
+    82→  id: string
+    83→  workspaceId: string
+    84→  projectId: string
+    85→  runId: string | null
+    86→  checkId: string
+    87→  category: string
+    88→  severity: string
+    89→  status: string
+    90→  confidence: string
+    91→  businessImpact: string[]
+    92→  title: string
+    93→  description: string | null
+    94→  remediation: string | null
+    95→  fingerprint: string
+    96→  affectedUrl: string
+    97→  normalizedUrl: string
+    98→  viewport: string | null
+    99→  locale: string | null
+   100→  browser: string | null
+   101→  domSelector: string | null
+   102→  evidence: unknown
+   103→  aiExplanation: string | null
+   104→  aiSummary: string | null
+   105→  tags: string[]
+   106→  assignedToId: string | null
+   107→  assigneeName: string | null
+   108→  assigneeEmail: string | null
+   109→  firstSeenAt: string
+   110→  lastSeenAt: string
+   111→  resolvedAt: string | null
+   112→  createdAt: string
+   113→  updatedAt: string
+   114→  occurrenceCount: number
+   115→  isSuppressed: boolean
+   116→  activeSuppressionId: string | null
+   117→}
+   118→
+   119→export interface CommentView {
+   120→  id: string
+   121→  findingId: string
+   122→  authorId: string
+   123→  authorName: string | null
+   124→  authorEmail: string
+   125→  body: string
+   126→  createdAt: string
+   127→  updatedAt: string
+   128→}
+   129→
+   130→export interface StatusHistoryView {
+   131→  id: string
+   132→  findingId: string
+   133→  fromStatus: string
+   134→  toStatus: string
+   135→  reason: string | null
+   136→  changedById: string | null
+   137→  changedByName: string | null
+   138→  changedAt: string
+   139→}
+   140→
+   141→export interface SuppressionView {
+   142→  id: string
+   143→  findingId: string | null
+   144→  workspaceId: string
+   145→  projectId: string | null
+   146→  checkId: string | null
+   147→  fingerprint: string | null
+   148→  reason: string
+   149→  createdById: string
+   150→  createdByName: string | null
+   151→  createdByEmail: string
+   152→  expiresAt: string | null
+   153→  createdAt: string
+   154→  revokedAt: string | null
+   155→  revokedById: string | null
+   156→  isActive: boolean
+   157→}
+   158→
+   159→// ===========================================================
+   160→// Helpers
+   161→// ===========================================================
+   162→
+   163→function safeJsonParse(input: string | null): unknown {
+   164→  if (!input) return null
+   165→  try {
+   166→    return JSON.parse(input)
+   167→  } catch {
+   168→    return null
+   169→  }
+   170→}
+   171→
+   172→function asArray<T>(value: T | T[] | undefined): T[] | undefined {
+   173→  if (value === undefined) return undefined
+   174→  return Array.isArray(value) ? value : [value]
+   175→}
+   176→
+   177→/** Include shape used by `loadFindingInWorkspace` and `patchFinding`. */
+   178→const FINDING_DETAIL_INCLUDE = {
+   179→  assignee: { select: { id: true, name: true, email: true } },
+   180→  suppressions: {
+   181→    where: { revokedAt: null },
+   182→    include: { createdBy: { select: { id: true, name: true, email: true } } },
+   183→    orderBy: { createdAt: 'desc' },
+   184→  },
+   185→} satisfies Prisma.FindingInclude
+   186→
+   187→/** Inferred type for a Finding row with the above include. */
+   188→type FindingWithDetail = Prisma.FindingGetPayload<{ include: typeof FINDING_DETAIL_INCLUDE }>
+   189→
+   190→/** Verify the finding belongs to the workspace and return it; throws 404 otherwise. */
+   191→async function loadFindingInWorkspace(
+   192→  findingId: string,
+   193→  workspaceId: string,
+   194→): Promise<FindingWithDetail> {
+   195→  const finding = await db.finding.findUnique({
+   196→    where: { id: findingId },
+   197→    include: FINDING_DETAIL_INCLUDE,
+   198→  })
+   199→  if (!finding || finding.workspaceId !== workspaceId) {
+   200→    throw new NotFoundError('Finding')
+   201→  }
+   202→  return finding
+   203→}
+   204→
+   205→/** True if a suppression record is currently active (not revoked, not expired). */
+   206→export function isSuppressionActive(s: { revokedAt: Date | null; expiresAt: Date | null }): boolean {
+   207→  if (s.revokedAt) return false
+   208→  if (s.expiresAt && s.expiresAt < new Date()) return false
+   209→  return true
+   210→}
+   211→
+   212→function formatFinding(row: {
+   213→  id: string
+   214→  workspaceId: string
+   215→  projectId: string
+   216→  runId: string | null
+   217→  checkId: string
+   218→  category: string
+   219→  severity: string
+   220→  status: string
+   221→  confidence: string
+   222→  businessImpact: string | null
+   223→  title: string
+   224→  description: string | null
+   225→  remediation: string | null
+   226→  fingerprint: string
+   227→  affectedUrl: string
+   228→  normalizedUrl: string
+   229→  viewport: string | null
+   230→  locale: string | null
+   231→  browser: string | null
+   232→  domSelector: string | null
+   233→  evidence: string | null
+   234→  aiExplanation: string | null
+   235→  aiSummary: string | null
+   236→  tags: string
+   237→  assignedToId: string | null
+   238→  assignee?: { name: string | null; email: string } | null
+   239→  firstSeenAt: Date
+   240→  lastSeenAt: Date
+   241→  resolvedAt: Date | null
+   242→  createdAt: Date
+   243→  updatedAt: Date
+   244→  _count?: { occurrences: number }
+   245→  suppressions?: Array<{ revokedAt: Date | null; expiresAt: Date | null; id: string }>
+   246→}): FindingDetail {
+   247→  const activeSuppression = row.suppressions?.find(isSuppressionActive)
+   248→  return {
+   249→    id: row.id,
+   250→    workspaceId: row.workspaceId,
+   251→    projectId: row.projectId,
+   252→    runId: row.runId,
+   253→    checkId: row.checkId,
+   254→    category: row.category,
+   255→    severity: row.severity,
+   256→    status: row.status,
+   257→    confidence: row.confidence,
+   258→    businessImpact: parseBusinessImpacts(row.businessImpact),
+   259→    title: row.title,
+   260→    description: row.description,
+   261→    remediation: row.remediation,
+   262→    fingerprint: row.fingerprint,
+   263→    affectedUrl: row.affectedUrl,
+   264→    normalizedUrl: row.normalizedUrl,
+   265→    viewport: row.viewport,
+   266→    locale: row.locale,
+   267→    browser: row.browser,
+   268→    domSelector: row.domSelector,
+   269→    evidence: safeJsonParse(row.evidence),
+   270→    aiExplanation: row.aiExplanation,
+   271→    aiSummary: row.aiSummary,
+   272→    tags: parseTags(row.tags),
+   273→    assignedToId: row.assignedToId,
+   274→    assigneeName: row.assignee?.name ?? null,
+   275→    assigneeEmail: row.assignee?.email ?? null,
+   276→    firstSeenAt: row.firstSeenAt.toISOString(),
+   277→    lastSeenAt: row.lastSeenAt.toISOString(),
+   278→    resolvedAt: row.resolvedAt?.toISOString() ?? null,
+   279→    createdAt: row.createdAt.toISOString(),
+   280→    updatedAt: row.updatedAt.toISOString(),
+   281→    occurrenceCount: row._count?.occurrences ?? 0,
+   282→    isSuppressed: Boolean(activeSuppression),
+   283→    activeSuppressionId: activeSuppression?.id ?? null,
+   284→  }
+   285→}
+   286→
+   287→// ===========================================================
+   288→// List / Get
+   289→// ===========================================================
+   290→
+   291→export interface ListFindingsResult {
+   292→  items: FindingDetail[]
+   293→  nextCursor: string | null
+   294→  totalApprox: number
+   295→}
+   296→
+   297→/**
+   298→ * List findings for a workspace (optionally filtered to a project or run).
+   299→ *
+   300→ * Workspace scoping is enforced by the mandatory `workspaceId` parameter.
+   301→ * Project filtering further constrains to a project within that workspace.
+   302→ */
+   303→export async function listFindings(
+   304→  workspaceId: string,
+   305→  filters: FindingFilters,
+   306→  opts: ListFindingsOptions,
+   307→): Promise<ListFindingsResult> {
+   308→  const limit = Math.min(Math.max(opts.limit, 1), 100)
+   309→  const sort = opts.sort ?? 'lastSeenAt'
+   310→  const order = opts.order ?? 'desc'
+   311→
+   312→  const severities = asArray(filters.severity)
+   313→  const statuses = asArray(filters.status)
+   314→  const categories = asArray(filters.category)
+   315→
+   316→  const where: Record<string, unknown> = {
+   317→    workspaceId,
+   318→    ...(filters.projectId ? { projectId: filters.projectId } : {}),
+   319→    ...(filters.runId ? { runId: filters.runId } : {}),
+   320→    ...(severities?.length ? { severity: { in: severities } } : {}),
+   321→    ...(statuses?.length ? { status: { in: statuses } } : {}),
+   322→    ...(categories?.length ? { category: { in: categories } } : {}),
+   323→    ...(filters.locale ? { locale: filters.locale } : {}),
+   324→    ...(filters.viewport ? { viewport: filters.viewport } : {}),
+   325→    ...(filters.browser ? { browser: filters.browser } : {}),
+   326→    ...(filters.firstSeenAfter ? { firstSeenAt: { gte: new Date(filters.firstSeenAfter) } } : {}),
+   327→    ...(filters.firstSeenBefore ? { firstSeenAt: { lte: new Date(filters.firstSeenBefore) } } : {}),
+   328→  }
+   329→
+   330→  if (filters.assignedToId !== undefined) {
+   331→    where.assignedToId = filters.assignedToId
+   332→  } else if (filters.unassigned) {
+   333→    where.assignedToId = null
+   334→  }
+   335→
+   336→  if (filters.search) {
+   337→    const q = filters.search.trim()
+   338→    if (q.length > 200) {
+   339→      throw new ValidationError('Search query too long', { search: ['Max 200 characters'] })
+   340→    }
+   341→    where.OR = [
+   342→      { title: { contains: q } },
+   343→      { description: { contains: q } },
+   344→      { checkId: { contains: q } },
+   345→    ]
+   346→  }
+   347→
+   348→  if (filters.tags?.length) {
+   349→    // Tags stored as comma-separated string; use contains for each.
+   350→    // This is a substring match (good enough for v1; Phase 12 may add a
+   351→    // normalized tag table if filter performance becomes an issue).
+   352→    where.AND = filters.tags.map((t) => ({ tags: { contains: t } }))
+   353→  }
+   354→
+   355→  if (filters.suppression === 'active') {
+   356→    where.suppressions = {
+   357→      none: {
+   358→        revokedAt: null,
+   359→        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+   360→      },
+   361→    }
+   362→  } else if (filters.suppression === 'suppressed') {
+   363→    where.suppressions = {
+   364→      some: {
+   365→        revokedAt: null,
+   366→        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+   367→      },
+   368→    }
+   369→  }
+   370→
+   371→  const [rows, totalApprox] = await Promise.all([
+   372→    db.finding.findMany({
+   373→      where,
+   374→      include: {
+   375→        assignee: { select: { name: true, email: true } },
+   376→        suppressions: {
+   377→          where: { revokedAt: null },
+   378→          select: { id: true, revokedAt: true, expiresAt: true },
+   379→          orderBy: { createdAt: 'desc' },
+   380→        },
+   381→        _count: { select: { occurrences: true } },
+   382→      },
+   383→      orderBy: sort === 'severity'
+   384→        ? [{ severity: order }, { lastSeenAt: order }]
+   385→        : sort === 'title'
+   386→          ? [{ title: order }]
+   387→          : sort === 'firstSeenAt'
+   388→            ? [{ firstSeenAt: order }]
+   389→            : [{ lastSeenAt: order }],
+   390→      take: limit + 1,
+   391→      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+   392→    }),
+   393→    db.finding.count({ where }),
+   394→  ])
+   395→
+   396→  const hasMore = rows.length > limit
+   397→  const items = (hasMore ? rows.slice(0, limit) : rows).map((r) =>
+   398→    formatFinding(r),
+   399→  )
+   400→
+   401→  return {
+   402→    items,
+   403→    nextCursor: hasMore && items.length > 0 ? items[items.length - 1].id : null,
+   404→    totalApprox,
+   405→  }
+   406→}
+   407→
+   408→/** Get a single finding with full detail (comments, history, suppressions, occurrences). */
+   409→export async function getFinding(
+   410→  findingId: string,
+   411→  workspaceId: string,
+   412→): Promise<{
+   413→  finding: FindingDetail
+   414→  comments: CommentView[]
+   415→  statusHistory: StatusHistoryView[]
+   416→  suppressions: SuppressionView[]
+   417→  recentOccurrences: Array<{
+   418→    id: string
+   419→    runId: string | null
+   420→    viewport: string | null
+   421→    locale: string | null
+   422→    browser: string | null
+   423→    occurredAt: string
+   424→  }>
+   425→}> {
+   426→  const finding = await loadFindingInWorkspace(findingId, workspaceId)
+   427→
+   428→  const [comments, history, occurrences] = await Promise.all([
+   429→    db.findingComment.findMany({
+   430→      where: { findingId },
+   431→      include: { author: { select: { name: true, email: true } } },
+   432→      orderBy: { createdAt: 'asc' },
+   433→      take: 200,
+   434→    }),
+   435→    db.findingStatusHistory.findMany({
+   436→      where: { findingId },
+   437→      include: { changedBy: { select: { name: true } } },
+   438→      orderBy: { changedAt: 'desc' },
+   439→      take: 100,
+   440→    }),
+   441→    db.findingOccurrence.findMany({
+   442→      where: { findingId },
+   443→      orderBy: { occurredAt: 'desc' },
+   444→      take: 50,
+   445→      select: {
+   446→        id: true,
+   447→        runId: true,
+   448→        viewport: true,
+   449→        locale: true,
+   450→        browser: true,
+   451→        occurredAt: true,
+   452→      },
+   453→    }),
+   454→  ])
+   455→
+   456→  const suppressionsView: SuppressionView[] = (finding.suppressions ?? []).map((s) => ({
+   457→    id: s.id,
+   458→    findingId: s.findingId,
+   459→    workspaceId: s.workspaceId,
+   460→    projectId: s.projectId,
+   461→    checkId: s.checkId,
+   462→    fingerprint: s.fingerprint,
+   463→    reason: s.reason,
+   464→    createdById: s.createdById,
+   465→    createdByName: s.createdBy?.name ?? null,
+   466→    createdByEmail: s.createdBy?.email,
+   467→    expiresAt: s.expiresAt?.toISOString() ?? null,
+   468→    createdAt: s.createdAt.toISOString(),
+   469→    revokedAt: s.revokedAt?.toISOString() ?? null,
+   470→    revokedById: null,
+   471→    isActive: isSuppressionActive(s),
+   472→  }))
+   473→
+   474→  return {
+   475→    finding: formatFinding(finding),
+   476→    comments: comments.map((c) => ({
+   477→      id: c.id,
+   478→      findingId: c.findingId,
+   479→      authorId: c.authorId,
+   480→      authorName: c.author?.name ?? null,
+   481→      authorEmail: c.author?.email ?? '',
+   482→      body: c.body,
+   483→      createdAt: c.createdAt.toISOString(),
+   484→      updatedAt: c.updatedAt.toISOString(),
+   485→    })),
+   486→    statusHistory: history.map((h) => ({
+   487→      id: h.id,
+   488→      findingId: h.findingId,
+   489→      fromStatus: h.fromStatus,
+   490→      toStatus: h.toStatus,
+   491→      reason: h.reason,
+   492→      changedById: h.changedById,
+   493→      changedByName: h.changedBy?.name ?? null,
+   494→      changedAt: h.changedAt.toISOString(),
+   495→    })),
+   496→    suppressions: suppressionsView,
+   497→    recentOccurrences: occurrences.map((o) => ({
+   498→      id: o.id,
+   499→      runId: o.runId,
+   500→      viewport: o.viewport,
+   501→      locale: o.locale,
+   502→      browser: o.browser,
+   503→      occurredAt: o.occurredAt.toISOString(),
+   504→    })),
+   505→  }
+   506→}
+   507→
+   508→// ===========================================================
+   509→// Lifecycle state machine
+   510→// ===========================================================
+   511→
+   512→export interface TransitionResult {
+   513→  findingId: string
+   514→  previousStatus: FindingStatus
+   515→  newStatus: FindingStatus
+   516→  changedAt: string
+   517→  historyId: string
+   518→}
+   519→
+   520→/**
+   521→ * Transition a finding's status. Validates the transition against the
+   522→ * state machine, records a FindingStatusHistory entry, updates
+   523→ * `resolvedAt`/`lastSeenAt` as appropriate, and emits an audit entry.
+   524→ *
+   525→ * `actorRole` is required so we can refuse transitions that need
+   526→ * elevated permissions (e.g. ACCEPTED_RISK requires findings.update
+   527→ * which is granted to OWNER/ADMIN/MEMBER only).
+   528→ */
+   529→export async function transitionFinding(
+   530→  findingId: string,
+   531→  workspaceId: string,
+   532→  toStatus: FindingStatus,
+   533→  ctx: { userId: string; audit: AuditContext; reason?: string },
+   534→): Promise<TransitionResult> {
+   535→  assertStatus(toStatus)
+   536→  const finding = await loadFindingInWorkspace(findingId, workspaceId)
+   537→  const fromStatus = assertStatus(finding.status)
+   538→
+   539→  if (fromStatus === toStatus) {
+   540→    // Idempotent — no-op.
+   541→    return {
+   542→      findingId,
+   543→      previousStatus: fromStatus,
+   544→      newStatus: toStatus,
+   545→      changedAt: new Date().toISOString(),
+   546→      historyId: '',
+   547→    }
+   548→  }
+   549→
+   550→  assertCanTransition(fromStatus, toStatus)
+   551→
+   552→  // Use a transaction so status + history + audit are atomic.
+   553→  const [updated, history] = await db.$transaction([
+   554→    db.finding.update({
+   555→      where: { id: findingId },
+   556→      data: {
+   557→        status: toStatus,
+   558→        resolvedAt: toStatus === 'RESOLVED' ? new Date() : null,
+   559→        lastSeenAt: new Date(),
+   560→        updatedAt: new Date(),
+   561→      },
+   562→    }),
+   563→    db.findingStatusHistory.create({
+   564→      data: {
+   565→        findingId,
+   566→        fromStatus,
+   567→        toStatus,
+   568→        reason: ctx.reason ?? null,
+   569→        changedById: ctx.userId,
+   570→      },
+   571→    }),
+   572→  ])
+   573→
+   574→  await recordAudit(
+   575→    'FINDING_TRANSITION',
+   576→    { type: 'finding', id: findingId },
+   577→    { ...ctx.audit, actorType: 'USER', actorId: ctx.userId, workspaceId },
+   578→    { fromStatus, toStatus, reason: ctx.reason ?? null, historyId: history.id },
+   579→  )
+   580→
+   581→  // Emit a scan event so SSE listeners on the parent run see the change.
+   582→  if (finding.runId) {
+   583→    await appendScanEvent(finding.runId, 'finding.transition', {
+   584→      findingId,
+   585→      fromStatus,
+   586→      toStatus,
+   587→      reason: ctx.reason ?? null,
+   588→      changedById: ctx.userId,
+   589→    }).catch(() => {
+   590→      /* best-effort */
+   591→    })
+   592→  }
+   593→
+   594→  logger.info('Finding transition', {
+   595→    findingId,
+   596→    fromStatus,
+   597→    toStatus,
+   598→    userId: ctx.userId,
+   599→  })
+   600→
+   601→  return {
+   602→    findingId,
+   603→    previousStatus: fromStatus,
+   604→    newStatus: toStatus,
+   605→    changedAt: updated.updatedAt.toISOString(),
+   606→    historyId: history.id,
+   607→  }
+   608→}
+   609→
+   610→// ===========================================================
+   611→// Auto-reopen (called by the worker when a fingerprint re-appears)
+   612→// ===========================================================
+   613→
+   614→/**
+   615→ * If the existing finding is in RESOLVED status, automatically transition
+   616→ * it to REOPENED. This is the only "automatic" lifecycle transition;
+   617→ * every other transition requires a user action.
+   618→ *
+   619→ * IGNORED / ACCEPTED_RISK / FALSE_POSITIVE findings are NOT auto-reopened
+   620→ * because they represent intentional decisions that should not be silently
+   621→ * overturned by a re-scan.
+   622→ *
+   623→ * Returns true if a reopen occurred.
+   624→ */
+   625→export async function maybeAutoReopenFinding(
+   626→  findingId: string,
+   627→  runId: string | null,
+   628→  ctx: { requestId?: string },
+   629→): Promise<boolean> {
+   630→  const finding = await db.finding.findUnique({
+   631→    where: { id: findingId },
+   632→    select: { id: true, status: true, workspaceId: true, runId: true },
+   633→  })
+   634→  if (!finding) return false
+   635→  if (finding.status !== 'RESOLVED') return false
+   636→
+   637→  const now = new Date()
+   638→  await db.$transaction([
+   639→    db.finding.update({
+   640→      where: { id: findingId },
+   641→      data: {
+   642→        status: 'REOPENED',
+   643→        resolvedAt: null,
+   644→        lastSeenAt: now,
+   645→        updatedAt: now,
+   646→      },
+   647→    }),
+   648→    db.findingStatusHistory.create({
+   649→      data: {
+   650→        findingId,
+   651→        fromStatus: 'RESOLVED',
+   652→        toStatus: 'REOPENED',
+   653→        reason: 'Auto-reopened: fingerprint re-appeared in scan',
+   654→        changedById: null,
+   655→      },
+   656→    }),
+   657→  ])
+   658→
+   659→  await recordAudit(
+   660→    'FINDING_AUTO_REOPEN',
+   661→    { type: 'finding', id: findingId },
+   662→    {
+   663→      actorType: 'SYSTEM',
+   664→      workspaceId: finding.workspaceId,
+   665→      requestId: ctx.requestId,
+   666→    },
+   667→    { runId, findingId },
+   668→  )
+   669→
+   670→  const eventRunId = finding.runId ?? runId
+   671→  if (eventRunId) {
+   672→    await appendScanEvent(eventRunId, 'finding.reopened', {
+   673→      findingId,
+   674→      runId: runId ?? undefined,
+   675→    }).catch(() => {
+   676→      /* best-effort */
+   677→    })
+   678→  }
+   679→
+   680→  logger.info('Finding auto-reopened', { findingId, runId: runId ?? undefined })
+   681→  return true
+   682→}
+   683→
+   684→// ===========================================================
+   685→// Comments
+   686→// ===========================================================
+   687→
+   688→export async function addComment(
+   689→  findingId: string,
+   690→  workspaceId: string,
+   691→  authorId: string,
+   692→  body: string,
+   693→  audit: AuditContext,
+   694→): Promise<CommentView> {
+   695→  const finding = await loadFindingInWorkspace(findingId, workspaceId)
+   696→  const trimmed = body.trim()
+   697→  if (!trimmed) {
+   698→    throw new ValidationError('Comment body cannot be empty', { body: ['Required'] })
+   699→  }
+   700→  if (trimmed.length > 4000) {
+   701→    throw new ValidationError('Comment too long', { body: ['Max 4000 characters'] })
+   702→  }
+   703→
+   704→  const comment = await db.findingComment.create({
+   705→    data: { findingId, authorId, body: trimmed },
+   706→    include: { author: { select: { name: true, email: true } } },
+   707→  })
+   708→
+   709→  await recordAudit(
+   710→    'FINDING_COMMENT_CREATE',
+   711→    { type: 'finding', id: findingId },
+   712→    { ...audit, actorType: 'USER', actorId: authorId, workspaceId },
+   713→    { commentId: comment.id },
+   714→  )
+   715→
+   716→  if (finding.runId) {
+   717→    await appendScanEvent(finding.runId, 'finding.comment_added', {
+   718→      findingId,
+   719→      commentId: comment.id,
+   720→      authorId,
+   721→    }).catch(() => {
+   722→      /* best-effort */
+   723→    })
+   724→  }
+   725→
+   726→  return {
+   727→    id: comment.id,
+   728→    findingId: comment.findingId,
+   729→    authorId: comment.authorId,
+   730→    authorName: comment.author?.name ?? null,
+   731→    authorEmail: comment.author?.email ?? '',
+   732→    body: comment.body,
+   733→    createdAt: comment.createdAt.toISOString(),
+   734→    updatedAt: comment.updatedAt.toISOString(),
+   735→  }
+   736→}
+   737→
+   738→export async function listComments(
+   739→  findingId: string,
+   740→  workspaceId: string,
+   741→  opts: { limit?: number; cursor?: string } = {},
+   742→): Promise<{ items: CommentView[]; nextCursor: string | null }> {
+   743→  await loadFindingInWorkspace(findingId, workspaceId)
+   744→  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
+   745→  const rows = await db.findingComment.findMany({
+   746→    where: { findingId },
+   747→    include: { author: { select: { name: true, email: true } } },
+   748→    orderBy: { createdAt: 'asc' },
+   749→    take: limit + 1,
+   750→    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+   751→  })
+   752→  const hasMore = rows.length > limit
+   753→  const items = (hasMore ? rows.slice(0, limit) : rows).map((c) => ({
+   754→    id: c.id,
+   755→    findingId: c.findingId,
+   756→    authorId: c.authorId,
+   757→    authorName: c.author?.name ?? null,
+   758→    authorEmail: c.author?.email ?? '',
+   759→    body: c.body,
+   760→    createdAt: c.createdAt.toISOString(),
+   761→    updatedAt: c.updatedAt.toISOString(),
+   762→  }))
+   763→  return {
+   764→    items,
+   765→    nextCursor: hasMore && items.length > 0 ? items[items.length - 1].id : null,
+   766→  }
+   767→}
+   768→
+   769→// ===========================================================
+   770→// Assignment, tags, business impact
+   771→// ===========================================================
+   772→
+   773→export interface FindingPatch {
+   774→  status?: FindingStatus
+   775→  severity?: FindingSeverity
+   776→  confidence?: FindingConfidence
+   777→  assignedToId?: string | null
+   778→  tags?: string[]
+   779→  businessImpact?: BusinessImpact[]
+   780→  aiExplanation?: string
+   781→  aiSummary?: string
+   782→  /** Optional reason recorded in status history (only when status changes). */
+   783→  reason?: string
+   784→}
+   785→
+   786→/**
+   787→ * Apply a partial update to a finding. Each field is validated:
+   788→ *   - status transitions are checked against the state machine.
+   789→ *   - assignedToId must reference a workspace member (or null).
+   790→ *   - severity is validated (AI overrides are recorded in audit but the
+   791→ *     deterministic severity always wins if a rule exists — see
+   792→ *     `finding-severity.ts`).
+   793→ */
+   794→export async function patchFinding(
+   795→  findingId: string,
+   796→  workspaceId: string,
+   797→  patch: FindingPatch,
+   798→  ctx: { userId: string; audit: AuditContext },
+   799→): Promise<FindingDetail> {
+   800→  const finding = await loadFindingInWorkspace(findingId, workspaceId)
+   801→
+   802→  const data: Record<string, unknown> = {}
+   803→  const auditMeta: Record<string, unknown> = {}
+   804→
+   805→  if (patch.severity !== undefined) {
+   806→    assertSeverity(patch.severity)
+   807→    data.severity = patch.severity
+   808→    auditMeta.severity = { from: finding.severity, to: patch.severity }
+   809→  }
+   810→
+   811→  if (patch.confidence !== undefined) {
+   812→    const { assertConfidence } = await import('./finding-severity')
+   813→    assertConfidence(patch.confidence)
+   814→    data.confidence = patch.confidence
+   815→    auditMeta.confidence = patch.confidence
+   816→  }
+   817→
+   818→  if (patch.assignedToId !== undefined) {
+   819→    if (patch.assignedToId !== null) {
+   820→      // Validate the assignee is a member of the workspace.
+   821→      const membership = await db.workspaceMember.findUnique({
+   822→        where: {
+   823→          workspaceId_userId: { workspaceId, userId: patch.assignedToId },
+   824→        },
+   825→        select: { id: true, removedAt: true },
+   826→      })
+   827→      if (!membership || membership.removedAt) {
+   828→        throw new ValidationError('Assignee is not a workspace member', {
+   829→          assignedToId: ['Must be an active workspace member'],
+   830→        })
+   831→      }
+   832→    }
+   833→    data.assignedToId = patch.assignedToId
+   834→    auditMeta.assignedToId = { from: finding.assignedToId, to: patch.assignedToId }
+   835→  }
+   836→
+   837→  if (patch.tags !== undefined) {
+   838→    data.tags = serializeTags(patch.tags)
+   839→    auditMeta.tags = patch.tags
+   840→  }
+   841→
+   842→  if (patch.businessImpact !== undefined) {
+   843→    data.businessImpact = serializeBusinessImpacts(patch.businessImpact)
+   844→    auditMeta.businessImpact = patch.businessImpact
+   845→  }
+   846→
+   847→  if (patch.aiExplanation !== undefined) {
+   848→    if (patch.aiExplanation.length > 8000) {
+   849→      throw new ValidationError('AI explanation too long', { aiExplanation: ['Max 8000 chars'] })
+   850→    }
+   851→    data.aiExplanation = patch.aiExplanation || null
+   852→    auditMeta.aiExplanationUpdated = true
+   853→  }
+   854→
+   855→  if (patch.aiSummary !== undefined) {
+   856→    if (patch.aiSummary.length > 2000) {
+   857→      throw new ValidationError('AI summary too long', { aiSummary: ['Max 2000 chars'] })
+   858→    }
+   859→    data.aiSummary = patch.aiSummary || null
+   860→    auditMeta.aiSummaryUpdated = true
+   861→  }
+   862→
+   863→  // Handle status transition separately (it has its own history record).
+   864→  let historyId: string | null = null
+   865→  if (patch.status !== undefined) {
+   866→    const toStatus = assertStatus(patch.status)
+   867→    const fromStatus = assertStatus(finding.status)
+   868→    if (fromStatus !== toStatus) {
+   869→      assertCanTransition(fromStatus, toStatus)
+   870→      data.status = toStatus
+   871→      data.resolvedAt = toStatus === 'RESOLVED' ? new Date() : null
+   872→      data.lastSeenAt = new Date()
+   873→      auditMeta.status = { from: fromStatus, to: toStatus }
+   874→    }
+   875→  }
+   876→
+   877→  if (Object.keys(data).length === 0) {
+   878→    // Nothing to update.
+   879→    return formatFinding(finding)
+   880→  }
+   881→
+   882→  // Apply in a transaction so status history is atomic with the finding update.
+   883→  const [updated] = await db.$transaction([
+   884→    db.finding.update({
+   885→      where: { id: findingId },
+   886→      data,
+   887→      include: {
+   888→        assignee: { select: { name: true, email: true } },
+   889→        suppressions: {
+   890→          where: { revokedAt: null },
+   891→          select: { id: true, revokedAt: true, expiresAt: true },
+   892→          orderBy: { createdAt: 'desc' },
+   893→        },
+   894→        _count: { select: { occurrences: true } },
+   895→      },
+   896→    }),
+   897→    ...(patch.status && data.status
+   898→      ? [
+   899→          db.findingStatusHistory.create({
+   900→            data: {
+   901→              findingId,
+   902→              fromStatus: finding.status,
+   903→              toStatus: data.status as string,
+   904→              reason: patch.reason ?? null,
+   905→              changedById: ctx.userId,
+   906→            },
+   907→          }),
+   908→        ]
+   909→      : []),
+   910→  ])
+   911→
+   912→  await recordAudit(
+   913→    'FINDING_UPDATE',
+   914→    { type: 'finding', id: findingId },
+   915→    { ...ctx.audit, actorType: 'USER', actorId: ctx.userId, workspaceId },
+   916→    { ...auditMeta, historyId },
+   917→  )
+   918→
+   919→  if (finding.runId && patch.status) {
+   920→    await appendScanEvent(finding.runId, 'finding.transition', {
+   921→      findingId,
+   922→      fromStatus: finding.status,
+   923→      toStatus: patch.status,
+   924→      reason: patch.reason ?? null,
+   925→      changedById: ctx.userId,
+   926→    }).catch(() => {
+   927→      /* best-effort */
+   928→    })
+   929→  }
+   930→
+   931→  return formatFinding(updated)
+   932→}
+   933→
+   934→// ===========================================================
+   935→// Suppressions
+   936→// ===========================================================
+   937→
+   938→export interface CreateSuppressionInput {
+   939→  findingId?: string
+   940→  projectId?: string
+   941→  checkId?: string
+   942→  fingerprint?: string
+   943→  reason: string
+   944→  expiresAt?: string | null
+   945→}
+   946→
+   947→/**
+   948→ * Create a suppression. At least one of {findingId, projectId, checkId, fingerprint}
+   949→ * must be provided. The combination determines the scope:
+   950→ *
+   951→ *   - findingId only       → suppress this single finding.
+   952→ *   - projectId + checkId  → suppress this check across the project.
+   953→ *   - fingerprint          → suppress by fingerprint (covers re-opens).
+   954→ *   - projectId only       → suppress ALL findings in the project (DANGEROUS,
+   955→ *                            requires billing.manage / owner role; refused otherwise).
+   956→ *
+   957→ * Expiry is optional. Revocation is always explicit (separate endpoint).
+   958→ */
+   959→export async function createSuppression(
+   960→  workspaceId: string,
+   961→  input: CreateSuppressionInput,
+   962→  ctx: { userId: string; audit: AuditContext; isOwnerOrAdmin: boolean },
+   963→): Promise<SuppressionView> {
+   964→  const reason = input.reason.trim()
+   965→  if (reason.length < 3 || reason.length > 500) {
+   966→    throw new ValidationError('Suppression reason must be 3–500 characters', {
+   967→      reason: ['3–500 characters required'],
+   968→    })
+   969→  }
+   970→  if (!input.findingId && !input.checkId && !input.fingerprint && !input.projectId) {
+   971→    throw new ValidationError('Suppression must target at least one of: findingId, projectId+checkId, fingerprint', {
+   972→      scope: ['At least one scope field required'],
+   973→    })
+   974→  }
+   975→
+   976→  // If a findingId is provided, load the finding to scope automatically.
+   977→  let findingId = input.findingId
+   978→  let projectId = input.projectId
+   979→  let fingerprint = input.fingerprint
+   980→  let checkId = input.checkId
+   981→
+   982→  if (findingId) {
+   983→    const finding = await loadFindingInWorkspace(findingId, workspaceId)
+   984→    projectId = projectId ?? finding.projectId
+   985→    checkId = checkId ?? finding.checkId
+   986→    fingerprint = fingerprint ?? finding.fingerprint
+   987→  }
+   988→
+   989→  // Validate project belongs to workspace if provided.
+   990→  if (projectId) {
+   991→    const project = await db.project.findUnique({
+   992→      where: { id: projectId },
+   993→      select: { workspaceId: true, status: true },
+   994→    })
+   995→    if (!project || project.workspaceId !== workspaceId || project.status === 'DELETED') {
+   996→      throw new NotFoundError('Project')
+   997→    }
+   998→  }
+   999→
+  1000→  // Broad suppression (no checkId, no fingerprint, no findingId) requires owner/admin.
+  1001→  if (!findingId && !checkId && !fingerprint && projectId) {
+  1002→    if (!ctx.isOwnerOrAdmin) {
+  1003→      throw new ForbiddenError('Project-wide suppressions require OWNER or ADMIN role')
+  1004→    }
+  1005→  }
+  1006→
+  1007→  let expiresAt: Date | null = null
+  1008→  if (input.expiresAt) {
+  1009→    const d = new Date(input.expiresAt)
+  1010→    if (isNaN(d.getTime())) {
+  1011→      throw new ValidationError('Invalid expiresAt', { expiresAt: ['ISO 8601 required'] })
+  1012→    }
+  1013→    if (d < new Date()) {
+  1014→      throw new ValidationError('Suppression expiry must be in the future', {
+  1015→        expiresAt: ['Must be future date'],
+  1016→      })
+  1017→    }
+  1018→    // Cap at 1 year.
+  1019→    const max = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+  1020→    if (d > max) {
+  1021→      throw new ValidationError('Suppression expiry cannot exceed 1 year', {
+  1022→        expiresAt: ['Max 1 year'],
+  1023→      })
+  1024→    }
+  1025→    expiresAt = d
+  1026→  }
+  1027→
+  1028→  const suppression = await db.findingSuppression.create({
+  1029→    data: {
+  1030→      findingId: findingId ?? null,
+  1031→      workspaceId,
+  1032→      projectId: projectId ?? null,
+  1033→      checkId: checkId ?? null,
+  1034→      fingerprint: fingerprint ?? null,
+  1035→      reason,
+  1036→      createdById: ctx.userId,
+  1037→      expiresAt,
+  1038→    },
+  1039→    include: { createdBy: { select: { name: true, email: true } } },
+  1040→  })
+  1041→
+  1042→  await recordAudit(
+  1043→    'FINDING_SUPPRESS',
+  1044→    { type: 'finding_suppression', id: suppression.id },
+  1045→    { ...ctx.audit, actorType: 'USER', actorId: ctx.userId, workspaceId },
+  1046→    {
+  1047→      findingId,
+  1048→      projectId,
+  1049→      checkId,
+  1050→      fingerprint,
+  1051→      reason,
+  1052→      expiresAt: expiresAt?.toISOString() ?? null,
+  1053→    },
+  1054→  )
+  1055→
+  1056→  // Emit scan event on the affected finding's run (if any).
+  1057→  if (findingId) {
+  1058→    const finding = await db.finding.findUnique({
+  1059→      where: { id: findingId },
+  1060→      select: { runId: true },
+  1061→    })
+  1062→    if (finding?.runId) {
+  1063→      await appendScanEvent(finding.runId, 'finding.suppressed', {
+  1064→        findingId,
+  1065→        suppressionId: suppression.id,
+  1066→        reason,
+  1067→      }).catch(() => {
+  1068→        /* best-effort */
+  1069→      })
+  1070→    }
+  1071→  }
+  1072→
+  1073→  return {
+  1074→    id: suppression.id,
+  1075→    findingId: suppression.findingId,
+  1076→    workspaceId: suppression.workspaceId,
+  1077→    projectId: suppression.projectId,
+  1078→    checkId: suppression.checkId,
+  1079→    fingerprint: suppression.fingerprint,
+  1080→    reason: suppression.reason,
+  1081→    createdById: suppression.createdById,
+  1082→    createdByName: suppression.createdBy?.name ?? null,
+  1083→    createdByEmail: suppression.createdBy?.email ?? '',
+  1084→    expiresAt: suppression.expiresAt?.toISOString() ?? null,
+  1085→    createdAt: suppression.createdAt.toISOString(),
+  1086→    revokedAt: null,
+  1087→    revokedById: null,
+  1088→    isActive: true,
+  1089→  }
+  1090→}
+  1091→
+  1092→/**
+  1093→ * Revoke a suppression. Idempotent — revoking an already-revoked suppression
+  1094→ * returns the existing record without error.
+  1095→ */
+  1096→export async function revokeSuppression(
+  1097→  suppressionId: string,
+  1098→  workspaceId: string,
+  1099→  ctx: { userId: string; audit: AuditContext },
+  1100→): Promise<SuppressionView> {
+  1101→  const suppression = await db.findingSuppression.findUnique({
+  1102→    where: { id: suppressionId },
+  1103→    include: { createdBy: { select: { name: true, email: true } } },
+  1104→  })
+  1105→  if (!suppression || suppression.workspaceId !== workspaceId) {
+  1106→    throw new NotFoundError('Suppression')
+  1107→  }
+  1108→
+  1109→  if (suppression.revokedAt) {
+  1110→    // Idempotent.
+  1111→    return {
+  1112→      id: suppression.id,
+  1113→      findingId: suppression.findingId,
+  1114→      workspaceId: suppression.workspaceId,
+  1115→      projectId: suppression.projectId,
+  1116→      checkId: suppression.checkId,
+  1117→      fingerprint: suppression.fingerprint,
+  1118→      reason: suppression.reason,
+  1119→      createdById: suppression.createdById,
+  1120→      createdByName: suppression.createdBy?.name ?? null,
+  1121→      createdByEmail: suppression.createdBy?.email ?? '',
+  1122→      expiresAt: suppression.expiresAt?.toISOString() ?? null,
+  1123→      createdAt: suppression.createdAt.toISOString(),
+  1124→      revokedAt: suppression.revokedAt.toISOString(),
+  1125→      revokedById: null,
+  1126→      isActive: false,
+  1127→    }
+  1128→  }
+  1129→
+  1130→  const updated = await db.findingSuppression.update({
+  1131→    where: { id: suppressionId },
+  1132→    data: { revokedAt: new Date() },
+  1133→    include: { createdBy: { select: { name: true, email: true } } },
+  1134→  })
+  1135→
+  1136→  await recordAudit(
+  1137→    'FINDING_UNSUPPRESS',
+  1138→    { type: 'finding_suppression', id: suppressionId },
+  1139→    { ...ctx.audit, actorType: 'USER', actorId: ctx.userId, workspaceId },
+  1140→    { findingId: suppression.findingId, fingerprint: suppression.fingerprint },
+  1141→  )
+  1142→
+  1143→  if (suppression.findingId) {
+  1144→    const finding = await db.finding.findUnique({
+  1145→      where: { id: suppression.findingId },
+  1146→      select: { runId: true },
+  1147→    })
+  1148→    if (finding?.runId) {
+  1149→      await appendScanEvent(finding.runId, 'finding.unsuppressed', {
+  1150→        findingId: suppression.findingId,
+  1151→        suppressionId,
+  1152→      }).catch(() => {
+  1153→        /* best-effort */
+  1154→      })
+  1155→    }
+  1156→  }
+  1157→
+  1158→  return {
+  1159→    id: updated.id,
+  1160→    findingId: updated.findingId,
+  1161→    workspaceId: updated.workspaceId,
+  1162→    projectId: updated.projectId,
+  1163→    checkId: updated.checkId,
+  1164→    fingerprint: updated.fingerprint,
+  1165→    reason: updated.reason,
+  1166→    createdById: updated.createdById,
+  1167→    createdByName: updated.createdBy?.name ?? null,
+  1168→    createdByEmail: updated.createdBy?.email ?? '',
+  1169→    expiresAt: updated.expiresAt?.toISOString() ?? null,
+  1170→    createdAt: updated.createdAt.toISOString(),
+  1171→    revokedAt: updated.revokedAt!.toISOString(),
+  1172→    revokedById: null,
+  1173→    isActive: false,
+  1174→  }
+  1175→}
+  1176→
+  1177→/**
+  1178→ * Check whether a finding is currently suppressed (used by the worker
+  1179→ * to skip occurrence recording for suppressed findings).
+  1180→ */
+  1181→export async function isFindingSuppressed(
+  1182→  fingerprint: string,
+  1183→  workspaceId: string,
+  1184→  opts: { checkId?: string; projectId?: string } = {},
+  1185→): Promise<boolean> {
+  1186→  const now = new Date()
+  1187→  // Look up any active suppression matching the fingerprint OR (projectId+checkId)
+  1188→  // OR (workspace-wide without projectId/checkId).
+  1189→  const matching = await db.findingSuppression.findFirst({
+  1190→    where: {
+  1191→      workspaceId,
+  1192→      revokedAt: null,
+  1193→      AND: [
+  1194→        { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+  1195→        {
+  1196→          OR: [
+  1197→            ...(opts.projectId && opts.checkId
+  1198→              ? [{ projectId: opts.projectId, checkId: opts.checkId }]
+  1199→              : []),
+  1200→            { fingerprint },
+  1201→            // Workspace-wide (no scope fields): match anything.
+  1202→            { findingId: null, projectId: null, checkId: null, fingerprint: null },
+  1203→          ],
+  1204→        },
+  1205→      ],
+  1206→    },
+  1207→    select: { id: true },
+  1208→  })
+  1209→  return Boolean(matching)
+  1210→}
+  1211→
+  1212→export async function listSuppressions(
+  1213→  workspaceId: string,
+  1214→  opts: {
+  1215→    projectId?: string
+  1216→    findingId?: string
+  1217→    activeOnly?: boolean
+  1218→    limit?: number
+  1219→    cursor?: string
+  1220→  } = {},
+  1221→): Promise<{ items: SuppressionView[]; nextCursor: string | null }> {
+  1222→  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
+  1223→  const now = new Date()
+  1224→  const where: Record<string, unknown> = { workspaceId }
+  1225→  if (opts.projectId) where.projectId = opts.projectId
+  1226→  if (opts.findingId) where.findingId = opts.findingId
+  1227→  if (opts.activeOnly) {
+  1228→    where.revokedAt = null
+  1229→    where.OR = [{ expiresAt: null }, { expiresAt: { gt: now } }]
+  1230→  }
+  1231→  const rows = await db.findingSuppression.findMany({
+  1232→    where,
+  1233→    include: { createdBy: { select: { name: true, email: true } } },
+  1234→    orderBy: { createdAt: 'desc' },
+  1235→    take: limit + 1,
+  1236→    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+  1237→  })
+  1238→  const hasMore = rows.length > limit
+  1239→  const items = (hasMore ? rows.slice(0, limit) : rows).map((s) => ({
+  1240→    id: s.id,
+  1241→    findingId: s.findingId,
+  1242→    workspaceId: s.workspaceId,
+  1243→    projectId: s.projectId,
+  1244→    checkId: s.checkId,
+  1245→    fingerprint: s.fingerprint,
+  1246→    reason: s.reason,
+  1247→    createdById: s.createdById,
+  1248→    createdByName: s.createdBy?.name ?? null,
+  1249→    createdByEmail: s.createdBy?.email ?? '',
+  1250→    expiresAt: s.expiresAt?.toISOString() ?? null,
+  1251→    createdAt: s.createdAt.toISOString(),
+  1252→    revokedAt: s.revokedAt?.toISOString() ?? null,
+  1253→    revokedById: null,
+  1254→    isActive: isSuppressionActive(s),
+  1255→  }))
+  1256→  return {
+  1257→    items,
+  1258→    nextCursor: hasMore && items.length > 0 ? items[items.length - 1].id : null,
+  1259→  }
+  1260→}
+  1261→
+  1262→// ===========================================================
+  1263→// Bulk update
+  1264→// ===========================================================
+  1265→
+  1266→export interface BulkUpdateInput {
+  1267→  /** Filter (must include at least one of projectId/runId/severity/status/category). */
+  1268→  filter: FindingFilters
+  1269→  /** Action to apply to every matching finding. */
+  1270→  action:
+  1271→    | { type: 'transition'; toStatus: FindingStatus; reason?: string }
+  1272→    | { type: 'assign'; assignedToId: string | null }
+  1273→    | { type: 'add_tags'; tags: string[] }
+  1274→    | { type: 'remove_tags'; tags: string[] }
+  1275→    | { type: 'set_business_impact'; impacts: BusinessImpact[] }
+  1276→}
+  1277→
+  1278→export interface BulkUpdateResult {
+  1279→  matched: number
+  1280→  updated: number
+  1281→  skipped: number
+  1282→  errors: Array<{ findingId: string; error: string }>
+  1283→}
+  1284→
+  1285→/**
+  1286→ * Apply a bulk action to findings matching the filter. Each finding is
+  1287→ * updated individually so transitions are validated against the state
+  1288→ * machine (invalid transitions are skipped, not fatal).
+  1289→ *
+  1290→ * Hard cap: 500 findings per bulk operation.
+  1291→ */
+  1292→export async function bulkUpdateFindings(
+  1293→  workspaceId: string,
+  1294→  input: BulkUpdateInput,
+  1295→  ctx: { userId: string; audit: AuditContext },
+  1296→): Promise<BulkUpdateResult> {
+  1297→  // Require at least one non-trivial filter to avoid "update all" foot-guns.
+  1298→  if (
+  1299→    !input.filter.projectId &&
+  1300→    !input.filter.runId &&
+  1301→    !input.filter.severity &&
+  1302→    !input.filter.status &&
+  1303→    !input.filter.category &&
+  1304→    !input.filter.assignedToId &&
+  1305→    !input.filter.search &&
+  1306→    !input.filter.tags?.length
+  1307→  ) {
+  1308→    throw new ValidationError('Bulk update requires at least one filter', {
+  1309→      filter: ['Provide projectId, runId, severity, status, category, assignee, search, or tags'],
+  1310→    })
+  1311→  }
+  1312→
+  1313→  // Validate the assignee (if provided in action).
+  1314→  if (input.action.type === 'assign' && input.action.assignedToId !== null) {
+  1315→    const membership = await db.workspaceMember.findUnique({
+  1316→      where: {
+  1317→        workspaceId_userId: { workspaceId, userId: input.action.assignedToId },
+  1318→      },
+  1319→      select: { id: true, removedAt: true },
+  1320→    })
+  1321→    if (!membership || membership.removedAt) {
+  1322→      throw new ValidationError('Assignee is not a workspace member', {
+  1323→        assignedToId: ['Must be an active workspace member'],
+  1324→      })
+  1325→    }
+  1326→  }
+  1327→
+  1328→  // Validate tags (if provided).
+  1329→  if (input.action.type === 'add_tags' || input.action.type === 'remove_tags') {
+  1330→    parseTags(input.action.tags.join(',')) // throws on invalid
+  1331→  }
+  1332→  if (input.action.type === 'set_business_impact') {
+  1333→    for (const i of input.action.impacts) {
+  1334→      if (!isBusinessImpact(i)) {
+  1335→        throw new ValidationError(`Invalid business impact: ${i}`, { impacts: ['Invalid value'] })
+  1336→      }
+  1337→    }
+  1338→  }
+  1339→
+  1340→  // Fetch matching IDs (capped).
+  1341→  const { items } = await listFindings(workspaceId, input.filter, { limit: 500 })
+  1342→  if (items.length === 0) {
+  1343→    return { matched: 0, updated: 0, skipped: 0, errors: [] }
+  1344→  }
+  1345→
+  1346→  const errors: Array<{ findingId: string; error: string }> = []
+  1347→  let updated = 0
+  1348→  let skipped = 0
+  1349→
+  1350→  for (const item of items) {
+  1351→    try {
+  1352→      if (input.action.type === 'transition') {
+  1353→        const toStatus = assertStatus(input.action.toStatus)
+  1354→        const fromStatus = assertStatus(item.status)
+  1355→        if (fromStatus === toStatus) {
+  1356→          skipped++
+  1357→          continue
+  1358→        }
+  1359→        if (!canTransition(fromStatus, toStatus)) {
+  1360→          skipped++
+  1361→          continue
+  1362→        }
+  1363→        await transitionFinding(item.id, workspaceId, toStatus, {
+  1364→          userId: ctx.userId,
+  1365→          audit: ctx.audit,
+  1366→          reason: input.action.reason,
+  1367→        })
+  1368→      } else if (input.action.type === 'assign') {
+  1369→        await patchFinding(item.id, workspaceId, { assignedToId: input.action.assignedToId }, ctx)
+  1370→      } else if (input.action.type === 'add_tags') {
+  1371→        const existing = new Set(item.tags.map((t) => t.toLowerCase()))
+  1372→        const merged = [
+  1373→          ...item.tags,
+  1374→          ...input.action.tags.filter((t) => !existing.has(t.toLowerCase())),
+  1375→        ]
+  1376→        await patchFinding(item.id, workspaceId, { tags: merged }, ctx)
+  1377→      } else if (input.action.type === 'remove_tags') {
+  1378→        const toRemove = new Set(input.action.tags.map((t) => t.toLowerCase()))
+  1379→        const remaining = item.tags.filter((t) => !toRemove.has(t.toLowerCase()))
+  1380→        await patchFinding(item.id, workspaceId, { tags: remaining }, ctx)
+  1381→      } else if (input.action.type === 'set_business_impact') {
+  1382→        await patchFinding(
+  1383→          item.id,
+  1384→          workspaceId,
+  1385→          { businessImpact: input.action.impacts },
+  1386→          ctx,
+  1387→        )
+  1388→      }
+  1389→      updated++
+  1390→    } catch (err) {
+  1391→      errors.push({ findingId: item.id, error: err instanceof Error ? err.message : String(err) })
+  1392→    }
+  1393→  }
+  1394→
+  1395→  await recordAudit(
+  1396→    'FINDING_BULK_UPDATE',
+  1397→    { type: 'workspace', id: workspaceId },
+  1398→    { ...ctx.audit, actorType: 'USER', actorId: ctx.userId, workspaceId },
+  1399→    {
+  1400→      action: input.action.type,
+  1401→      matched: items.length,
+  1402→      updated,
+  1403→      skipped,
+  1404→      errorCount: errors.length,
+  1405→    },
+  1406→  )
+  1407→
+  1408→  return {
+  1409→    matched: items.length,
+  1410→    updated,
+  1411→    skipped,
+  1412→    errors,
+  1413→  }
+  1414→}
+  1415→
+  1416→// ===========================================================
+  1417→// CSV export
+  1418→// ===========================================================
+  1419→
+  1420→/**
+  1421→ * Export findings matching the filter as CSV. Returns the CSV string.
+  1422→ * Hard cap: 5000 rows per export.
+  1423→ */
+  1424→export async function exportFindingsCsv(
+  1425→  workspaceId: string,
+  1426→  filters: FindingFilters,
+  1427→): Promise<string> {
+  1428→  const { items } = await listFindings(workspaceId, filters, { limit: 5000 })
+  1429→  const headers = [
+  1430→    'id',
+  1431→    'title',
+  1432→    'category',
+  1433→    'severity',
+  1434→    'status',
+  1435→    'confidence',
+  1436→    'checkId',
+  1437→    'affectedUrl',
+  1438→    'normalizedUrl',
+  1439→    'viewport',
+  1440→    'locale',
+  1441→    'browser',
+  1442→    'domSelector',
+  1443→    'businessImpact',
+  1444→    'tags',
+  1445→    'assignedTo',
+  1446→    'assigneeEmail',
+  1447→    'firstSeenAt',
+  1448→    'lastSeenAt',
+  1449→    'resolvedAt',
+  1450→    'occurrenceCount',
+  1451→    'isSuppressed',
+  1452→  ]
+  1453→  const escape = (v: unknown): string => {
+  1454→    const s = v === null || v === undefined ? '' : String(v)
+  1455→    if (/[",\n\r]/.test(s)) {
+  1456→      return '"' + s.replace(/"/g, '""') + '"'
+  1457→    }
+  1458→    return s
+  1459→  }
+  1460→  const lines = [headers.join(',')]
+  1461→  for (const f of items) {
+  1462→    lines.push(
+  1463→      [
+  1464→        f.id,
+  1465→        f.title,
+  1466→        f.category,
+  1467→        f.severity,
+  1468→        f.status,
+  1469→        f.confidence,
+  1470→        f.checkId,
+  1471→        f.affectedUrl,
+  1472→        f.normalizedUrl,
+  1473→        f.viewport ?? '',
+  1474→        f.locale ?? '',
+  1475→        f.browser ?? '',
+  1476→        f.domSelector ?? '',
+  1477→        f.businessImpact.join('|'),
+  1478→        f.tags.join('|'),
+  1479→        f.assigneeName ?? '',
+  1480→        f.assigneeEmail ?? '',
+  1481→        f.firstSeenAt,
+  1482→        f.lastSeenAt,
+  1483→        f.resolvedAt ?? '',
+  1484→        f.occurrenceCount,
+  1485→        f.isSuppressed ? 'true' : 'false',
+  1486→      ]
+  1487→        .map(escape)
+  1488→        .join(','),
+  1489→    )
+  1490→  }
+  1491→  return lines.join('\n')
+  1492→}
+  1493→
+  1494→// ===========================================================
+  1495→// Helpers exported for routes
+  1496→// ===========================================================
+  1497→
+  1498→export {
+  1499→  parseTags,
+  1500→  serializeTags,
+  1501→  parseBusinessImpacts,
+  1502→  serializeBusinessImpacts,
+  1503→  isBusinessImpact,
+  1504→  OPEN_STATUSES,
+  1505→}
+  1506→

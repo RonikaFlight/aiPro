@@ -86,8 +86,7 @@ export default function DemoTargetHome() {
             onClick={() => {
               console.error('ProofPilot demo: intentional console error for scanner test')
               try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                ;(window as unknown as { undefinedVariable?: { deepProperty?: unknown } }).undefinedVariable?.deepProperty
+                void (window as unknown as { undefinedVariable?: { deepProperty?: unknown } }).undefinedVariable?.deepProperty
               } catch (e) {
                 console.error('ProofPilot demo: caught', e)
               }

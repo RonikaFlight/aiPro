@@ -1,0 +1,800 @@
+   120→  activeJourneys: number
+   121→}
+   122→
+   123→interface ReportInfo {
+   124→  id: string
+   125→  type: string
+   126→  status: string
+   127→  title: string
+   128→  score: number | null
+   129→  createdAt: string
+   130→}
+   131→
+   132→interface DashboardData {
+   133→  project: ProjectInfo
+   134→  score: ScoreBreakdown
+   135→  latestRun: RunInfo | null
+   136→  trend: TrendPoint[]
+   137→  blockers: BlockingFinding[]
+   138→  findingsBySeverity: GroupCount[]
+   139→  findingsByCategory: GroupCount[]
+   140→  coverage: CoverageInfo
+   141→  journeys: JourneyInfo
+   142→  recentReports: ReportInfo[]
+   143→}
+   144→
+   145→// ─── Helpers ─────────────────────────────────────────────────────
+   146→
+   147→function relativeTime(date: string): string {
+   148→  const diff = Date.now() - new Date(date).getTime()
+   149→  const mins = Math.floor(diff / 60_000)
+   150→  if (mins < 1) return 'just now'
+   151→  if (mins < 60) return `${mins}m ago`
+   152→  const hours = Math.floor(mins / 60)
+   153→  if (hours < 24) return `${hours}h ago`
+   154→  const days = Math.floor(hours / 24)
+   155→  if (days < 30) return `${days}d ago`
+   156→  return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+   157→}
+   158→
+   159→function formatScore(score: number | null): string {
+   160→  if (score === null || score === undefined) return '—'
+   161→  return `${Math.round(score * 100)}%`
+   162→}
+   163→
+   164→function statusColor(status: string): string {
+   165→  switch (status) {
+   166→    case 'COMPLETED':
+   167→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+   168→    case 'COMPLETED_WITH_WARNINGS':
+   169→      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+   170→    case 'FAILED':
+   171→      return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+   172→    case 'CANCELLED':
+   173→    case 'TIMED_OUT':
+   174→      return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+   175→    case 'RUNNING':
+   176→    case 'ANALYZING':
+   177→      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+   178→    default:
+   179→      return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+   180→  }
+   181→}
+   182→
+   183→function readinessColor(readiness: string): string {
+   184→  switch (readiness) {
+   185→    case 'READY':
+   186→      return 'text-emerald-600 dark:text-emerald-400'
+   187→    case 'NEEDS_WORK':
+   188→      return 'text-amber-600 dark:text-amber-400'
+   189→    case 'NOT_READY':
+   190→      return 'text-red-600 dark:text-red-400'
+   191→    default:
+   192→      return 'text-muted-foreground'
+   193→  }
+   194→}
+   195→
+   196→function readinessBg(readiness: string): string {
+   197→  switch (readiness) {
+   198→    case 'READY':
+   199→      return 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800'
+   200→    case 'NEEDS_WORK':
+   201→      return 'bg-amber-50 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800'
+   202→    case 'NOT_READY':
+   203→      return 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+   204→    default:
+   205→      return 'bg-muted border-border'
+   206→  }
+   207→}
+   208→
+   209→function gradeColor(grade: string): string {
+   210→  switch (grade) {
+   211→    case 'A': return 'bg-emerald-600'
+   212→    case 'B': return 'bg-lime-600'
+   213→    case 'C': return 'bg-amber-500'
+   214→    case 'D': return 'bg-orange-500'
+   215→    case 'F': return 'bg-red-600'
+   216→    default: return 'bg-gray-500'
+   217→  }
+   218→}
+   219→
+   220→function severityColor(severity: string): string {
+   221→  switch (severity) {
+   222→    case 'BLOCKER':
+   223→      return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+   224→    case 'CRITICAL':
+   225→      return 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300'
+   226→    case 'MAJOR':
+   227→      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+   228→    case 'MINOR':
+   229→      return 'bg-lime-100 text-lime-800 dark:bg-lime-900/40 dark:text-lime-300'
+   230→    case 'INFO':
+   231→      return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+   232→    default:
+   233→      return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+   234→  }
+   235→}
+   236→
+   237→function scoreTrendIcon(current: number | null, previous: number | null) {
+   238→  if (current === null || previous === null) return <Minus className="h-4 w-4 text-muted-foreground" />
+   239→  if (current > previous) return <TrendingUp className="h-4 w-4 text-emerald-600" />
+   240→  if (current < previous) return <TrendingDown className="h-4 w-4 text-red-500" />
+   241→  return <Minus className="h-4 w-4 text-muted-foreground" />
+   242→}
+   243→
+   244→// ─── Component ───────────────────────────────────────────────────
+   245→
+   246→export default function ProjectDashboardPage() {
+   247→  const params = useParams<{ projectId: string }>()
+   248→  const projectId = params.projectId
+   249→
+   250→  const [data, setData] = useState<DashboardData | null>(null)
+   251→  const [loading, setLoading] = useState(true)
+   252→  const [error, setError] = useState<string | null>(null)
+   253→
+   254→  const loadData = useCallback(async () => {
+   255→    setLoading(true)
+   256→    setError(null)
+   257→    try {
+   258→      const res = await fetch(`/api/v1/projects/${projectId}/dashboard`)
+   259→      if (!res.ok) {
+   260→        const body = await res.json().catch(() => ({}))
+   261→        setError(body.detail || `Failed to load dashboard (${res.status})`)
+   262→        return
+   263→      }
+   264→      setData(await res.json())
+   265→    } catch (err) {
+   266→      setError(err instanceof Error ? err.message : 'Failed to load')
+   267→    } finally {
+   268→      setLoading(false)
+   269→    }
+   270→  }, [projectId])
+   271→
+   272→  useEffect(() => {
+   273→    void loadData()
+   274→  }, [loadData])
+   275→
+   276→  // ─── Loading Skeleton ───────────────────────────────────────
+   277→
+   278→  if (loading) {
+   279→    return (
+   280→      <div className="min-h-screen flex flex-col bg-background">
+   281→        <AppHeader projectName="" workspaceName="" workspaceId="" />
+   282→        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   283→          <div className="animate-pulse space-y-6">
+   284→            <div className="h-8 bg-muted rounded w-1/3" />
+   285→            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+   286→              {[1, 2, 3, 4].map((i) => (
+   287→                <Skeleton key={i} className="h-24 rounded-xl" />
+   288→              ))}
+   289→            </div>
+   290→            <div className="grid md:grid-cols-2 gap-4">
+   291→              <Skeleton className="h-64 rounded-xl" />
+   292→              <Skeleton className="h-64 rounded-xl" />
+   293→            </div>
+   294→          </div>
+   295→        </main>
+   296→      </div>
+   297→    )
+   298→  }
+   299→
+   300→  // ─── Error State ───────────────────────────────────────────
+   301→
+   302→  if (error || !data) {
+   303→    return (
+   304→      <div className="min-h-screen flex flex-col bg-background">
+   305→        <AppHeader projectName="" workspaceName="" workspaceId="" />
+   306→        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   307→          <Card>
+   308→            <CardHeader>
+   309→              <CardTitle>Failed to load project dashboard</CardTitle>
+   310→              <CardDescription>{error || 'Unknown error'}</CardDescription>
+   311→            </CardHeader>
+   312→            <CardContent>
+   313→              <Button onClick={() => void loadData()}>Retry</Button>
+   314→            </CardContent>
+   315→          </Card>
+   316→        </main>
+   317→      </div>
+   318→    )
+   319→  }
+   320→
+   321→  const { project, score, latestRun, trend, blockers, findingsBySeverity, findingsByCategory, coverage, journeys, recentReports } = data
+   322→  const totalOpenFindings = findingsBySeverity.reduce((sum, g) => sum + g.count, 0)
+   323→
+   324→  return (
+   325→    <div className="min-h-screen flex flex-col bg-background">
+   326→      <AppHeader
+   327→        projectName={project.name}
+   328→        workspaceName={project.workspace.name}
+   329→        workspaceId={project.workspace.id}
+   330→      />
+   331→
+   332→      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   333→        {/* Breadcrumb */}
+   334→        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
+   335→          <Link href="/app" className="hover:text-foreground transition-colors">Dashboard</Link>
+   336→          <span>/</span>
+   337→          <Link href={`/app/workspaces/${project.workspace.id}`} className="hover:text-foreground transition-colors">
+   338→            {project.workspace.name}
+   339→          </Link>
+   340→          <span>/</span>
+   341→          <span className="text-foreground font-medium">{project.name}</span>
+   342→        </div>
+   343→
+   344→        {/* Page Title */}
+   345→        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+   346→          <div>
+   347→            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{project.name}</h1>
+   348→            {project.description && (
+   349→              <p className="text-muted-foreground text-sm mt-1">{project.description}</p>
+   350→            )}
+   351→          </div>
+   352→          <div className="flex items-center gap-2">
+   353→            <Button variant="outline" size="sm" asChild>
+   354→              <Link href={`/app/projects/${project.id}/findings`}>
+   355→                <Bug className="h-4 w-4 mr-1.5" />
+   356→                All Findings
+   357→              </Link>
+   358→            </Button>
+   359→            <Button variant="outline" size="sm" asChild>
+   360→              <Link href={`/app/projects/${project.id}/reports`}>
+   361→                <FileBarChart className="h-4 w-4 mr-1.5" />
+   362→                Reports
+   363→              </Link>
+   364→            </Button>
+   365→          </div>
+   366→        </div>
+   367→
+   368→        {/* ── Score + Readiness Row ─────────────────────────── */}
+   369→        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+   370→          {/* Quality Score Card */}
+   371→          <Card className="lg:col-span-1">
+   372→            <CardHeader className="pb-3">
+   373→              <CardDescription className="flex items-center gap-1.5">
+   374→                <Gauge className="h-3.5 w-3.5" />
+   375→                Quality Score
+   376→              </CardDescription>
+   377→            </CardHeader>
+   378→            <CardContent>
+   379→              <div className="flex items-center gap-4">
+   380→                <div className={`flex items-center justify-center rounded-xl w-16 h-16 ${gradeColor(score.grade)} text-white text-2xl font-bold`}>
+   381→                  {score.grade}
+   382→                </div>
+   383→                <div>
+   384→                  <div className="text-3xl font-bold tabular-nums">
+   385→                    {formatScore(score.score as number)}
+   386→                  </div>
+   387→                  {latestRun && (
+   388→                    <div className="flex items-center gap-1.5 mt-1 text-sm">
+   389→                      {scoreTrendIcon(latestRun.score, latestRun.previousScore)}
+   390→                      <span className="text-muted-foreground">
+   391→                        {latestRun.previousScore !== null
+   392→                          ? `${Math.round(((latestRun.score ?? 0) - latestRun.previousScore) * 100)} pts`
+   393→                          : 'First scan'}
+   394→                      </span>
+   395→                    </div>
+   396→                  )}
+   397→                </div>
+   398→              </div>
+   399→            </CardContent>
+   400→          </Card>
+   401→
+   402→          {/* Delivery Readiness */}
+   403→          <Card className={`lg:col-span-1 border ${readinessBg(score.readiness)}`}>
+   404→            <CardHeader className="pb-3">
+   405→              <CardDescription className="flex items-center gap-1.5">
+   406→                <Target className="h-3.5 w-3.5" />
+   407→                Delivery Readiness
+   408→              </CardDescription>
+   409→            </CardHeader>
+   410→            <CardContent>
+   411→              <div className="text-2xl font-bold mb-1">
+   412→                {score.readiness.replace(/_/g, ' ')}
+   413→              </div>
+   414→              <p className={`text-sm ${readinessColor(score.readiness)}`}>
+   415→                {score.readiness === 'READY'
+   416→                  ? 'No blockers or criticals. Ready for delivery.'
+   417→                  : score.readiness === 'NEEDS_WORK'
+   418→                    ? 'Open critical findings need resolution.'
+   419→                    : 'Open blockers prevent delivery readiness.'}
+   420→              </p>
+   421→              {score.hasOpenBlocker && (
+   422→                <div className="flex items-center gap-1.5 mt-2 text-xs text-red-600 dark:text-red-400">
+   423→                  <AlertOctagon className="h-3.5 w-3.5" />
+   424→                  {findingsBySeverity.find((s) => s.severity === 'BLOCKER')?.count ?? 0} open blocker(s)
+   425→                </div>
+   426→              )}
+   427→            </CardContent>
+   428→          </Card>
+   429→
+   430→          {/* Quick Stats */}
+   431→          <Card className="lg:col-span-1">
+   432→            <CardHeader className="pb-3">
+   433→              <CardDescription className="flex items-center gap-1.5">
+   434→                <BarChart3 className="h-3.5 w-3.5" />
+   435→                Summary
+   436→              </CardDescription>
+   437→            </CardHeader>
+   438→            <CardContent>
+   439→              <div className="grid grid-cols-2 gap-3">
+   440→                <div>
+   441→                  <div className="text-2xl font-bold tabular-nums">{project.totalRuns}</div>
+   442→                  <div className="text-xs text-muted-foreground">Total runs</div>
+   443→                </div>
+   444→                <div>
+   445→                  <div className="text-2xl font-bold tabular-nums">{totalOpenFindings}</div>
+   446→                  <div className="text-xs text-muted-foreground">Open findings</div>
+   447→                </div>
+   448→                <div>
+   449→                  <div className="text-2xl font-bold tabular-nums">{project.totalJourneys}</div>
+   450→                  <div className="text-xs text-muted-foreground">Journeys</div>
+   451→                </div>
+   452→                <div>
+   453→                  <div className="text-2xl font-bold tabular-nums">{project.totalEnvironments}</div>
+   454→                  <div className="text-xs text-muted-foreground">Environments</div>
+   455→                </div>
+   456→              </div>
+   457→            </CardContent>
+   458→          </Card>
+   459→        </div>
+   460→
+   461→        {/* ── Trend + Latest Run ─────────────────────────────── */}
+   462→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+   463→          {/* Score Trend */}
+   464→          <Card>
+   465→            <CardHeader>
+   466→              <CardTitle className="text-base">Score Trend</CardTitle>
+   467→              <CardDescription>Quality score across recent runs</CardDescription>
+   468→            </CardHeader>
+   469→            <CardContent>
+   470→              {trend.length === 0 ? (
+   471→                <div className="py-8 text-center text-muted-foreground text-sm">
+   472→                  No completed runs yet. Start a scan to see trends.
+   473→                </div>
+   474→              ) : (
+   475→                <div className="space-y-2">
+   476→                  {/* Simple bar chart visualization */}
+   477→                  <div className="flex items-end gap-1 h-32">
+   478→                    {trend.map((t, i) => {
+   479→                      const s = t.score !== null ? t.score * 100 : 0
+   480→                      const color = s >= 80 ? 'bg-emerald-500' : s >= 60 ? 'bg-amber-500' : s > 0 ? 'bg-red-500' : 'bg-gray-200'
+   481→                      return (
+   482→                        <div
+   483→                          key={t.id}
+   484→                          className={`flex-1 rounded-t ${color} min-h-[4px] transition-all`}
+   485→                          style={{ height: `${Math.max(s, 4)}%` }}
+   486→                          title={`${new Date(t.createdAt).toLocaleDateString()}: ${Math.round(s)}%`}
+   487→                        />
+   488→                      )
+   489→                    })}
+   490→                  </div>
+   491→                  <div className="flex justify-between text-xs text-muted-foreground">
+   492→                    {trend.length > 0 && (
+   493→                      <>
+   494→                        <span>{new Date(trend[0].createdAt).toLocaleDateString()}</span>
+   495→                        <span>{new Date(trend[trend.length - 1].createdAt).toLocaleDateString()}</span>
+   496→                      </>
+   497→                    )}
+   498→                  </div>
+   499→                </div>
+   500→              )}
+   501→            </CardContent>
+   502→          </Card>
+   503→
+   504→          {/* Latest Run */}
+   505→          <Card>
+   506→            <CardHeader>
+   507→              <CardTitle className="text-base flex items-center gap-2">
+   508→                Latest Run
+   509→                {latestRun && latestRun.status === 'RUNNING' && (
+   510→                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+   511→                )}
+   512→              </CardTitle>
+   513→              <CardDescription>Most recent scan execution</CardDescription>
+   514→            </CardHeader>
+   515→            <CardContent>
+   516→              {latestRun ? (
+   517→                <div className="space-y-4">
+   518→                  <div className="flex items-center gap-2">
+   519→                    <Badge variant="outline" className={`text-xs ${statusColor(latestRun.status)}`}>
+   520→                      {latestRun.status.replace(/_/g, ' ')}
+   521→                    </Badge>
+   522→                    <span className="text-xs text-muted-foreground">
+   523→                      {relativeTime(latestRun.createdAt)}
+   524→                    </span>
+   525→                    <Badge variant="secondary" className="text-xs">
+   526→                      {latestRun.trigger}
+   527→                    </Badge>
+   528→                  </div>
+   529→
+   530→                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+   531→                    <div>
+   532→                      <div className="text-xs text-muted-foreground">Pages</div>
+   533→                      <div className="font-medium tabular-nums">
+   534→                        {latestRun.pagesAnalyzed}/{latestRun.pagesDiscovered}
+   535→                      </div>
+   536→                    </div>
+   537→                    <div>
+   538→                      <div className="text-xs text-muted-foreground">Findings</div>
+   539→                      <div className="font-medium tabular-nums">{latestRun.findingsCount}</div>
+   540→                    </div>
+   541→                    <div>
+   542→                      <div className="text-xs text-muted-foreground">Blockers</div>
+   543→                      <div className="font-medium tabular-nums">{latestRun.blockerCount}</div>
+   544→                    </div>
+   545→                    <div>
+   546→                      <div className="text-xs text-muted-foreground">Score</div>
+   547→                      <div className="font-medium tabular-nums">{formatScore(latestRun.score)}</div>
+   548→                    </div>
+   549→                  </div>
+   550→
+   551→                  {latestRun.aiSummary && (
+   552→                    <div className="text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+   553→                      {latestRun.aiSummary}
+   554→                    </div>
+   555→                  )}
+   556→
+   557→                  <Button variant="outline" size="sm" className="w-full" asChild>
+   558→                    <Link href={`/app/runs/${latestRun.id}`}>
+   559→                      View run details <ArrowRight className="h-3.5 w-3.5 ml-1" />
+   560→                    </Link>
+   561→                  </Button>
+   562→                </div>
+   563→              ) : (
+   564→                <div className="py-8 text-center text-muted-foreground text-sm">
+   565→                  No scans run yet. Start your first scan to see results.
+   566→                </div>
+   567→              )}
+   568→            </CardContent>
+   569→          </Card>
+   570→        </div>
+   571→
+   572→        {/* ── Findings by Severity + Category ─────────────────── */}
+   573→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+   574→          {/* By Severity */}
+   575→          <Card>
+   576→            <CardHeader>
+   577→              <CardTitle className="text-base">Findings by Severity</CardTitle>
+   578→              <CardDescription>Active (open/acknowledged) findings</CardDescription>
+   579→            </CardHeader>
+   580→            <CardContent>
+   581→              {findingsBySeverity.length === 0 ? (
+   582→                <div className="py-6 text-center text-muted-foreground text-sm">
+   583→                  No active findings. Great job!
+   584→                </div>
+   585→              ) : (
+   586→                <div className="space-y-3">
+   587→                  {findingsBySeverity.map((g) => {
+   588→                    const pct = totalOpenFindings > 0 ? Math.round((g.count / totalOpenFindings) * 100) : 0
+   589→                    return (
+   590→                      <div key={g.severity} className="space-y-1">
+   591→                        <div className="flex items-center justify-between text-sm">
+   592→                          <Badge variant="outline" className={`text-xs ${severityColor(g.severity!)}`}>
+   593→                            {g.severity}
+   594→                          </Badge>
+   595→                          <span className="font-medium tabular-nums">{g.count}</span>
+   596→                        </div>
+   597→                        <Progress value={pct} className="h-1.5" />
+   598→                      </div>
+   599→                    )
+   600→                  })}
+   601→                </div>
+   602→              )}
+   603→            </CardContent>
+   604→          </Card>
+   605→
+   606→          {/* By Category */}
+   607→          <Card>
+   608→            <CardHeader>
+   609→              <CardTitle className="text-base">Findings by Category</CardTitle>
+   610→              <CardDescription>Distribution across check categories</CardDescription>
+   611→            </CardHeader>
+   612→            <CardContent>
+   613→              {findingsByCategory.length === 0 ? (
+   614→                <div className="py-6 text-center text-muted-foreground text-sm">
+   615→                  No active findings. Great job!
+   616→                </div>
+   617→              ) : (
+   618→                <div className="space-y-2 max-h-64 overflow-y-auto">
+   619→                  {findingsByCategory.map((g) => {
+   620→                    const maxCount = findingsByCategory[0]?.count ?? 1
+   621→                    const pct = Math.round((g.count / maxCount) * 100)
+   622→                    return (
+   623→                      <div key={g.category} className="space-y-1">
+   624→                        <div className="flex items-center justify-between text-sm">
+   625→                          <span className="text-muted-foreground truncate max-w-[200px]">{g.category}</span>
+   626→                          <span className="font-medium tabular-nums shrink-0">{g.count}</span>
+   627→                        </div>
+   628→                        <Progress value={pct} className="h-1.5" />
+   629→                      </div>
+   630→                    )
+   631→                  })}
+   632→                </div>
+   633→              )}
+   634→            </CardContent>
+   635→          </Card>
+   636→        </div>
+   637→
+   638→        {/* ── Blockers + Coverage + Journeys ───────────────────── */}
+   639→        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+   640→          {/* Open Blockers */}
+   641→          <Card className="lg:col-span-1">
+   642→            <CardHeader>
+   643→              <CardTitle className="text-base flex items-center gap-2">
+   644→                <AlertOctagon className="h-4 w-4 text-red-500" />
+   645→                Blockers
+   646→              </CardTitle>
+   647→              <CardDescription>Open blockers need immediate attention</CardDescription>
+   648→            </CardHeader>
+   649→            <CardContent>
+   650→              {blockers.length === 0 ? (
+   651→                <div className="py-6 text-center">
+   652→                  <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
+   653→                  <p className="text-sm text-muted-foreground">No open blockers!</p>
+   654→                </div>
+   655→              ) : (
+   656→                <div className="space-y-3 max-h-64 overflow-y-auto">
+   657→                  {blockers.map((b) => (
+   658→                    <Link
+   659→                      key={b.id}
+   660→                      href={`/app/findings/${b.id}`}
+   661→                      className="block p-3 rounded-lg border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10 hover:bg-red-100/50 dark:hover:bg-red-900/20 transition-colors"
+   662→                    >
+   663→                      <div className="text-sm font-medium text-red-800 dark:text-red-300 line-clamp-2">
+   664→                        {b.title}
+   665→                      </div>
+   666→                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+   667→                        <span className="font-mono truncate max-w-[200px]">{b.affectedUrl}</span>
+   668→                        <span>{relativeTime(b.lastSeenAt)}</span>
+   669→                      </div>
+   670→                    </Link>
+   671→                  ))}
+   672→                </div>
+   673→              )}
+   674→            </CardContent>
+   675→          </Card>
+   676→
+   677→          {/* Coverage */}
+   678→          <Card className="lg:col-span-1">
+   679→            <CardHeader>
+   680→              <CardTitle className="text-base flex items-center gap-2">
+   681→                <Globe className="h-4 w-4" />
+   682→                Coverage
+   683→              </CardTitle>
+   684→              <CardDescription>Tested environments and configurations</CardDescription>
+   685→            </CardHeader>
+   686→            <CardContent>
+   687→              <div className="space-y-4">
+   688→                <div>
+   689→                  <div className="flex items-center gap-2 text-sm mb-2">
+   690→                    <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
+   691→                    <span className="text-muted-foreground">Pages analyzed</span>
+   692→                  </div>
+   693→                  <div className="text-lg font-bold tabular-nums">{coverage.totalPagesAnalyzed}</div>
+   694→                </div>
+   695→                <Separator />
+   696→                <div>
+   697→                  <div className="text-xs text-muted-foreground mb-1.5">Browsers</div>
+   698→                  {coverage.browsers.length > 0 ? (
+   699→                    <div className="flex flex-wrap gap-1.5">
+   700→                      {coverage.browsers.map((b) => (
+   701→                        <Badge key={b} variant="secondary" className="text-xs">{b}</Badge>
+   702→                      ))}
+   703→                    </div>
+   704→                  ) : (
+   705→                    <span className="text-sm text-muted-foreground">Not yet scanned</span>
+   706→                  )}
+   707→                </div>
+   708→                <div>
+   709→                  <div className="text-xs text-muted-foreground mb-1.5">Viewports</div>
+   710→                  {coverage.viewports.length > 0 ? (
+   711→                    <div className="flex flex-wrap gap-1.5">
+   712→                      {coverage.viewports.map((v) => (
+   713→                        <Badge key={v} variant="secondary" className="text-xs">{v}</Badge>
+   714→                      ))}
+   715→                    </div>
+   716→                  ) : (
+   717→                    <span className="text-sm text-muted-foreground">Not yet scanned</span>
+   718→                  )}
+   719→                </div>
+   720→                <div>
+   721→                  <div className="text-xs text-muted-foreground mb-1.5">Locales</div>
+   722→                  {coverage.locales.length > 0 ? (
+   723→                    <div className="flex flex-wrap gap-1.5">
+   724→                      {coverage.locales.map((l) => (
+   725→                        <Badge key={l} variant="secondary" className="text-xs">{l}</Badge>
+   726→                      ))}
+   727→                    </div>
+   728→                  ) : (
+   729→                    <span className="text-sm text-muted-foreground">Not yet scanned</span>
+   730→                  )}
+   731→                </div>
+   732→              </div>
+   733→            </CardContent>
+   734→          </Card>
+   735→
+   736→          {/* Journey Success */}
+   737→          <Card className="lg:col-span-1">
+   738→            <CardHeader>
+   739→              <CardTitle className="text-base flex items-center gap-2">
+   740→                <Route className="h-4 w-4" />
+   741→                Journey Tests
+   742→              </CardTitle>
+   743→              <CardDescription>User journey execution results</CardDescription>
+   744→            </CardHeader>
+   745→            <CardContent>
+   746→              {journeys.totalRuns === 0 ? (
+   747→                <div className="py-6 text-center text-muted-foreground text-sm">
+   748→                  No journey runs yet. Create a journey to test user flows.
+   749→                </div>
+   750→              ) : (
+   751→                <div className="space-y-4">
+   752→                  <div className="flex items-center gap-4">
+   753→                    <div className="flex-1">
+   754→                      <div className="text-xs text-muted-foreground mb-1">Success rate</div>
+   755→                      <div className="text-2xl font-bold tabular-nums">
+   756→                        {journeys.successRate ?? 0}%
+   757→                      </div>
+   758→                    </div>
+   759→                    <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold ${
+   760→                      (journeys.successRate ?? 0) >= 80
+   761→                        ? 'bg-emerald-500'
+   762→                        : (journeys.successRate ?? 0) >= 50
+   763→                          ? 'bg-amber-500'
+   764→                          : 'bg-red-500'
+   765→                    }`}>
+   766→                      {journeys.successRate ?? 0}%
+   767→                    </div>
+   768→                  </div>
+   769→                  <Progress
+   770→                    value={journeys.successRate ?? 0}
+   771→                    className="h-2"
+   772→                  />
+   773→                  <div className="grid grid-cols-3 gap-3 text-center text-sm">
+   774→                    <div>
+   775→                      <div className="font-bold tabular-nums">{journeys.totalRuns}</div>
+   776→                      <div className="text-xs text-muted-foreground">Total</div>
+   777→                    </div>
+   778→                    <div>
+   779→                      <div className="font-bold tabular-nums text-emerald-600">{journeys.completedRuns}</div>
+   780→                      <div className="text-xs text-muted-foreground">Passed</div>
+   781→                    </div>
+   782→                    <div>
+   783→                      <div className="font-bold tabular-nums">{journeys.activeJourneys}</div>
+   784→                      <div className="text-xs text-muted-foreground">Active</div>
+   785→                    </div>
+   786→                  </div>
+   787→                </div>
+   788→              )}
+   789→            </CardContent>
+   790→          </Card>
+   791→        </div>
+   792→
+   793→        {/* ── Recent Reports ─────────────────────────────────── */}
+   794→        <Card className="mb-6">
+   795→          <CardHeader>
+   796→            <div className="flex items-center justify-between">
+   797→              <div>
+   798→                <CardTitle className="text-base">Recent Reports</CardTitle>
+   799→                <CardDescription>Generated reports for this project</CardDescription>
+   800→              </div>
+   801→              <Button variant="outline" size="sm" asChild>
+   802→                <Link href={`/app/projects/${project.id}/reports`}>
+   803→                  View all <ArrowRight className="h-3.5 w-3.5 ml-1" />
+   804→                </Link>
+   805→              </Button>
+   806→            </div>
+   807→          </CardHeader>
+   808→          <CardContent>
+   809→            {recentReports.length === 0 ? (
+   810→              <div className="py-6 text-center text-muted-foreground text-sm">
+   811→                No reports generated yet. Complete a scan and create a report.
+   812→              </div>
+   813→            ) : (
+   814→              <div className="max-h-64 overflow-y-auto">
+   815→                <div className="divide-y">
+   816→                  {recentReports.map((r) => (
+   817→                    <div key={r.id} className="flex items-center justify-between py-3">
+   818→                      <div className="flex items-center gap-3 min-w-0">
+   819→                        <FileBarChart className="h-4 w-4 text-muted-foreground shrink-0" />
+   820→                        <div className="min-w-0">
+   821→                          <div className="text-sm font-medium truncate">{r.title}</div>
+   822→                          <div className="text-xs text-muted-foreground">
+   823→                            {r.type} &middot; {relativeTime(r.createdAt)}
+   824→                          </div>
+   825→                        </div>
+   826→                      </div>
+   827→                      <div className="flex items-center gap-2 shrink-0 ml-4">
+   828→                        {r.score !== null && (
+   829→                          <span className="text-sm font-medium tabular-nums">{Math.round(r.score * 100)}%</span>
+   830→                        )}
+   831→                        <Badge
+   832→                          variant="outline"
+   833→                          className={`text-xs ${r.status === 'READY' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-gray-50 text-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}
+   834→                        >
+   835→                          {r.status}
+   836→                        </Badge>
+   837→                      </div>
+   838→                    </div>
+   839→                  ))}
+   840→                </div>
+   841→              </div>
+   842→            )}
+   843→          </CardContent>
+   844→        </Card>
+   845→      </main>
+   846→
+   847→      <AppFooter />
+   848→    </div>
+   849→  )
+   850→}
+   851→
+   852→// ─── Shared Header ──────────────────────────────────────────────
+   853→
+   854→function AppHeader({
+   855→  projectName,
+   856→  workspaceName,
+   857→  workspaceId,
+   858→}: {
+   859→  projectName: string
+   860→  workspaceName: string
+   861→  workspaceId: string
+   862→}) {
+   863→  return (
+   864→    <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-sm">
+   865→      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+   866→        <div className="flex h-14 items-center justify-between">
+   867→          <div className="flex items-center gap-6">
+   868→            <Link href="/" className="flex items-center gap-2 font-semibold">
+   869→              <ShieldCheck className="h-5 w-5 text-primary" />
+   870→              <span>ProofPilot</span>
+   871→            </Link>
+   872→            <nav className="hidden sm:flex items-center gap-1">
+   873→              <Link
+   874→                href="/app"
+   875→                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-muted-foreground hover:bg-muted text-sm"
+   876→              >
+   877→                <LayoutDashboard className="h-3.5 w-3.5" />
+   878→                Dashboard
+   879→              </Link>
+   880→              {workspaceId && (
+   881→                <Link
+   882→                  href={`/app/workspaces/${workspaceId}`}
+   883→                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-muted-foreground hover:bg-muted text-sm"
+   884→                >
+   885→                  <FolderKanban className="h-3.5 w-3.5" />
+   886→                  {workspaceName || 'Workspace'}
+   887→                </Link>
+   888→              )}
+   889→              {projectName && (
+   890→                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-sm font-medium">
+   891→                  <Bug className="h-3.5 w-3.5" />
+   892→                  {projectName}
+   893→                </div>
+   894→              )}
+   895→            </nav>
+   896→          </div>
+   897→          <div className="flex items-center gap-2">
+   898→            <Link href="/app" className="text-sm text-muted-foreground hover:text-foreground transition-colors sm:hidden">
+   899→              <LayoutDashboard className="h-5 w-5" />
+   900→            </Link>
+   901→          </div>
+   902→        </div>
+   903→      </div>
+   904→    </header>
+   905→  )
+   906→}
+   907→
+   908→// ─── Shared Footer ──────────────────────────────────────────────
+   909→
+   910→function AppFooter() {
+   911→  return (
+   912→    <footer className="border-t mt-auto">
+   913→      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 text-sm text-muted-foreground">
+   914→        &copy; {new Date().getFullYear()} ProofPilot. Automated QA, not penetration testing.
+   915→      </div>
+   916→    </footer>
+   917→  )
+   918→}
+   919→

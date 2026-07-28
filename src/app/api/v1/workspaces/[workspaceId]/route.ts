@@ -45,8 +45,8 @@ export async function PATCH(
     const text = await request.text()
     const body = Body.parse(JSON.parse(text || '{}'))
     const workspace = await updateWorkspace(workspaceId, auth.userId, body, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(workspace)

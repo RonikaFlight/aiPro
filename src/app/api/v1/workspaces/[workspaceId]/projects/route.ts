@@ -46,8 +46,8 @@ export async function POST(
     const text = await request.text()
     const body = Body.parse(JSON.parse(text || '{}'))
     const project = await createProject(workspaceId, body, auth.userId, auth.workspaceRole!, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(project, { status: 201 })

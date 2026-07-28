@@ -50,8 +50,8 @@ export async function PATCH(
     const text = await request.text()
     const body = PatchBody.parse(JSON.parse(text || '{}'))
     const project = await updateProject(projectId, auth.userId, body, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(project)
@@ -71,8 +71,8 @@ export async function DELETE(
     const auth = await requireAuth()
     const { projectId } = await params
     await deleteProject(projectId, auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json({ ok: true })

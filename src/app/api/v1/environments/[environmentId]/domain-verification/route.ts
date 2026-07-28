@@ -33,8 +33,8 @@ export async function POST(
     })
 
     const result = await startDomainVerification(env.projectId, body.domain, body.method, auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(result, { status: 201 })

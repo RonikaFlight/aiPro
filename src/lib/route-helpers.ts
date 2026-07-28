@@ -8,6 +8,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z, ZodError } from 'zod'
 import { problemResponse, newRequestId, ValidationError, AppError } from './errors'
 import { assertCsrf } from './csrf'
+import { env } from './env'
 import type { AuthContext } from './auth-context'
 
 export interface RouteContext<TParams = Record<string, string>> {
@@ -222,7 +223,6 @@ export function setSessionCookieOnResponse(
   response: NextResponse,
   token: string,
 ): void {
-  const { env } = require('./env')
   const isProd = env.APP_ENV === 'production'
   response.headers.append(
     'Set-Cookie',
@@ -231,7 +231,6 @@ export function setSessionCookieOnResponse(
 }
 
 export function clearSessionCookieOnResponse(response: NextResponse): void {
-  const { env } = require('./env')
   response.headers.append(
     'Set-Cookie',
     `${env.SESSION_COOKIE_NAME}=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0`,

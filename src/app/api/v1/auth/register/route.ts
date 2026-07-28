@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const requestId = request.headers.get('X-Request-Id') ?? newRequestId()
   const instance = new URL(request.url).pathname
   try {
-    const ip = getClientIp(request as any)
+    const ip = getClientIp(request)
     checkRateLimit('register', ip)
 
     const text = await request.text()
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
     const { userId, verificationToken } = await registerUser(body, {
       ip,
-      userAgent: getUserAgent(request as any),
+      userAgent: getUserAgent(request),
       requestId,
     })
 

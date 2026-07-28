@@ -11,6 +11,7 @@
  */
 import { PrismaClient } from '@prisma/client'
 import { logger } from './logger'
+import { NotFoundError } from './errors'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
@@ -57,7 +58,6 @@ export async function assertWorkspaceOwned(
     select: { workspaceId: true },
   })
   if (!record || record.workspaceId !== workspaceId) {
-    const { NotFoundError } = require('./errors')
     throw new NotFoundError('Resource')
   }
   return true

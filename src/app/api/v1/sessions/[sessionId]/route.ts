@@ -17,8 +17,8 @@ export async function DELETE(
     const auth = await requireAuth()
     const { sessionId } = await params
     await revokeSession(sessionId, auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
       actorId: auth.userId,
     })

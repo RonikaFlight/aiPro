@@ -14,8 +14,8 @@ export async function POST(
     const auth = await requireAuth()
     const { verificationId } = await params
     const result = await checkDomainVerification(verificationId, auth.userId, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(result)

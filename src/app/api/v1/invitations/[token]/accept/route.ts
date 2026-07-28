@@ -18,8 +18,8 @@ export async function POST(
     const auth = await requireAuth()
     const { token } = await params
     const result = await acceptInvitation(token, auth.userId, auth.email, {
-      ip: getClientIp(request as any),
-      userAgent: getUserAgent(request as any),
+      ip: getClientIp(request),
+      userAgent: getUserAgent(request),
       requestId,
     })
     return NextResponse.json(result)
