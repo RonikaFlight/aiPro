@@ -969,3 +969,23 @@ Stage Summary:
 - Design system foundation: light/dark theme, emerald primary, glass-effect navbar, responsive mobile Sheet menu, theme toggle, 4-column footer, status color coding.
 - Phase 10 items completed: Public pages (`/` landing), Main dashboard (`/app`).
 - Remaining Phase 10: Authenticated sub-pages (workspaces, projects, runs, findings, journeys, etc.), Admin pages, Project dashboard, Run details, Findings table, Persian/RTL UI, remaining design system components (skeletons, data tables, pagination).
+
+---
+Task ID: 2 (Project Dashboard)
+Agent: main (Z.ai Code)
+Task: Phase 10 — Project Dashboard (checklist item 131): score, category cards, trend, latest run, blockers, findings by severity/category, browser/viewport/locale coverage, journey success rate, delivery readiness, recent reports
+
+Work Log:
+- Read PROJECT_MEMORY.md, IMPLEMENTATION_CHECKLIST.md, and worklog.md to understand project state and identify first incomplete item.
+- Identified line 131 "Project dashboard" as the first incomplete Phase 10 sub-task.
+- Created `src/app/api/v1/projects/[projectId]/dashboard/route.ts`: GET endpoint aggregating all dashboard data in a single call. Queries: project metadata + workspace, quality score via computeProjectScore(), latest run with config snapshot, score trend (last 20 completed runs), open blockers (top 10), findings grouped by severity + category (active statuses only), coverage (unique browsers/viewports/locales from findings + total pages analyzed), journey stats (total/completed/success rate/active), recent reports (top 5). Permission: findings.read via requireWorkspaceAuth.
+- Created `src/app/app/projects/[projectId]/page.tsx`: client component dashboard page with comprehensive layout. Sections: (1) Score card with grade badge (A-F color-coded) + trend arrow comparing latest vs previous score, (2) Delivery readiness card with contextual warnings for READY/NEEDS_WORK/NOT_READY states + open blocker count, (3) Summary stats card (total runs/open findings/journeys/environments), (4) Score trend bar chart (last 20 runs with color-coded bars), (5) Latest run card with status badges + pages/findings/blockers/score + AI summary excerpt + link to run details, (6) Findings by severity with progress bars, (7) Findings by category with progress bars, (8) Open blockers with red alert styling and links, (9) Coverage section with browser/viewport/locale badges + total pages, (10) Journey success rate with circular indicator + stats, (11) Recent reports list with type/status/score. Includes loading skeleton, error state with retry, responsive AppHeader with breadcrumbs, AppFooter, relative time formatting, status/severity/readiness color helpers.
+- Verified workspace page already links to `/app/projects/${p.id}` matching new route.
+- Lint: 0 new errors from new files. Pre-existing baseline unchanged.
+- Dev server: compiled successfully (GET / 200 shown in log).
+
+Stage Summary:
+- New files: src/app/api/v1/projects/[projectId]/dashboard/route.ts, src/app/app/projects/[projectId]/page.tsx
+- Project dashboard API returns aggregated data in single call (no client-side waterfall).
+- Dashboard UI features: grade badge, delivery readiness, score trend chart, severity/category breakdowns, blocker alerts, coverage badges, journey success rate, recent reports.
+- IMPLEMENTATION_CHECKLIST.md updated: line 131 marked complete with detailed description.

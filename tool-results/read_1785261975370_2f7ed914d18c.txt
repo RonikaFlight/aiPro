@@ -1,0 +1,1329 @@
+     1→// ProofPilot Prisma schema
+     2→// Provider: SQLite (sandbox) — portable to PostgreSQL.
+     3→// See DATABASE_DESIGN.md for design notes and PostgreSQL RLS plan.
+     4→
+     5→generator client {
+     6→  provider = "prisma-client-js"
+     7→}
+     8→
+     9→datasource db {
+    10→  provider = "sqlite"
+    11→  url      = env("DATABASE_URL")
+    12→}
+    13→
+    14→// ===========================================================
+    15→// Identity & Authentication
+    16→// ===========================================================
+    17→
+    18→model User {
+    19→  id             String        @id @default(cuid())
+    20→  email          String        @unique
+    21→  emailLower     String        @unique
+    22→  name           String?
+    23→  passwordHash   String?
+    24→  status         String        @default("PENDING_VERIFICATION") // UserStatus
+    25→  platformRole   String        @default("USER") // PlatformRole
+    26→  locale         String        @default("en")
+    27→  timezone       String        @default("UTC")
+    28→  avatarUrl      String?
+    29→  lastLoginAt    DateTime?
+    30→  failedLoginCount Int         @default(0)
+    31→  lockedUntil    DateTime?
+    32→  createdAt      DateTime      @default(now())
+    33→  updatedAt      DateTime      @updatedAt
+    34→
+    35→  oauthIdentities          OAuthIdentity[]
+    36→  sessions                 Session[]
+    37→  mfaFactors               MfaFactor[]
+    38→  recoveryCodes            MfaRecoveryCode[]
+    39→  emailVerificationTokens  EmailVerificationToken[]
+    40→  passwordResetTokens      PasswordResetToken[]
+    41→  workspaceMembers         WorkspaceMember[]
+    42→  workspaceInvitationsSent WorkspaceInvitation[] @relation("InvitationInviter")
+    43→  workspaceInvitationsRecv WorkspaceInvitation[] @relation("InvitationInvitee")
+    44→  ownedWorkspaces          Workspace[]            @relation("WorkspaceOwner")
+    45→  projects                 Project[]
+    46→  scanRuns                 ScanRun[]
+    47→  findingsAssigned         Finding[]              @relation("FindingAssignee")
+    48→  findingComments          FindingComment[]
+    49→  findingStatusHistory     FindingStatusHistory[]
+    50→  findingSuppressions      FindingSuppression[]   @relation("FindingSuppressionCreator")
+    51→  reports                  Report[]
+    52→  reportApprovals          ReportApproval[]
+    53→  reportSharesCreated      ReportShare[]            @relation("ShareCreator")
+    54→  journeysCreated          Journey[]              @relation("JourneyCreator")
+    55→  projectSecretsCreated    ProjectSecret[]        @relation("ProjectSecretCreator")
+    56→  apiKeys                  ApiKey[]
+    57→  notifications            Notification[]
+    58→  notificationPreferences  NotificationPreference[]
+    59→  auditLogs                AuditLog[]
+    60→  dataExportRequests       DataExportRequest[]
+    61→  dataDeletionRequests     DataDeletionRequest[]
+    62→  llmUsageRecords          LlmUsageRecord[]
+    63→
+    64→  @@index([emailLower])
+    65→  @@index([status])
+    66→}
+    67→
+    68→model OAuthIdentity {
+    69→  id            String   @id @default(cuid())
+    70→  userId        String
+    71→  provider      String   // "google" | "github"
+    72→  providerUserId String
+    73→  createdAt     DateTime @default(now())
+    74→  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    75→
+    76→  @@unique([provider, providerUserId])
+    77→  @@index([userId])
+    78→}
+    79→
+    80→model Session {
+    81→  id                   String    @id @default(cuid())
+    82→  userId               String
+    83→  tokenHash            String    @unique
+    84→  createdAt            DateTime  @default(now())
+    85→  lastActivityAt       DateTime  @default(now())
+    86→  expiresAt            DateTime
+    87→  absoluteExpiresAt    DateTime
+    88→  ipHash               String?
+    89→  userAgentSummary     String?
+    90→  revokedAt            DateTime?
+    91→  mfaCompleted         Boolean   @default(false)
+    92→  rotationCounter      Int       @default(0)
+    93→  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    94→
+    95→  @@index([userId])
+    96→  @@index([expiresAt])
+    97→}
+    98→
+    99→model MfaFactor {
+   100→  id           String   @id @default(cuid())
+   101→  userId       String
+   102→  type         String   @default("TOTP") // only TOTP in v1
+   103→  secretEncrypted String
+   104→  enabled      Boolean  @default(false)
+   105→  createdAt    DateTime @default(now())
+   106→  confirmedAt  DateTime?
+   107→  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+   108→
+   109→  @@index([userId])
+   110→}
+   111→
+   112→model MfaRecoveryCode {
+   113→  id        String   @id @default(cuid())
+   114→  userId    String
+   115→  codeHash  String   @unique
+   116→  usedAt    DateTime?
+   117→  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+   118→
+   119→  @@index([userId])
+   120→}
+   121→
+   122→model EmailVerificationToken {
+   123→  id         String   @id @default(cuid())
+   124→  userId     String
+   125→  tokenHash  String   @unique
+   126→  expiresAt  DateTime
+   127→  usedAt     DateTime?
+   128→  createdAt  DateTime @default(now())
+   129→  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+   130→
+   131→  @@index([userId])
+   132→}
+   133→
+   134→model PasswordResetToken {
+   135→  id         String   @id @default(cuid())
+   136→  userId     String
+   137→  tokenHash  String   @unique
+   138→  expiresAt  DateTime
+   139→  usedAt     DateTime?
+   140→  createdAt  DateTime @default(now())
+   141→  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+   142→
+   143→  @@index([userId])
+   144→}
+   145→
+   146→// OAuth flow state — single-use, expiring, anti-CSRF + anti-replay.
+   147→// - `stateHash`: SHA-256 of the raw `state` token (state appears in URLs and
+   148→//   logs, so we hash it at rest).
+   149→// - `codeVerifier`: the raw PKCE code_verifier (256-bit random, base64url).
+   150→//   Stored raw because (a) it is single-use, (b) it expires in 10 minutes,
+   151→//   (c) it is only useful alongside our client_secret (env, not in DB), and
+   152→//   (d) we need the raw value at token-exchange time. Redeeming an auth code
+   153→//   requires the auth code + redirect_uri + code_verifier + client_secret —
+   154→//   leaking the verifier alone is insufficient. See SECURITY_MODEL.md §"OAuth".
+   155→model OAuthState {
+   156→  id                String    @id @default(cuid())
+   157→  stateHash         String    @unique
+   158→  codeVerifier      String
+   159→  provider          String    // "google" | "github"
+   160→  redirectTarget    String?   // post-login path (e.g. "/app")
+   161→  ipHash            String?
+   162→  userAgentSummary  String?
+   163→  createdAt         DateTime  @default(now())
+   164→  expiresAt         DateTime
+   165→  usedAt            DateTime?
+   166→
+   167→  @@index([provider])
+   168→  @@index([expiresAt])
+   169→}
+   170→
+   171→// ===========================================================
+   172→// Tenancy
+   173→// ===========================================================
+   174→
+   175→model Workspace {
+   176→  id              String   @id @default(cuid())
+   177→  name            String
+   178→  slug            String   @unique
+   179→  ownerId         String
+   180→  planId          String?
+   181→  logoUrl         String?
+   182→  accentColor     String?
+   183→  brandName       String?
+   184→  brandIntro      String?
+   185→  brandFooter     String?
+   186→  brandContactEmail String?
+   187→  brandContactUrl  String?
+   188→  customDomain    String?
+   189→  retentionDays   Int      @default(30)
+   190→  createdAt       DateTime @default(now())
+   191→  updatedAt       DateTime @updatedAt
+   192→
+   193→  owner           User                @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+   194→  members         WorkspaceMember[]
+   195→  invitations     WorkspaceInvitation[]
+   196→  projects        Project[]
+   197→  auditLogs       AuditLog[]
+   198→  outgoingWebhooks OutgoingWebhook[]
+   199→  apiKeys         ApiKey[]
+   200→  notifications   Notification[]
+   201→  subscriptions   Subscription[]
+   202→  usageLedger     UsageLedger[]
+   203→  usagePeriods    UsagePeriod[]
+   204→  integrations    Integration[]
+   205→  llmUsageRecords LlmUsageRecord[]
+   206→  dataExportRequests DataExportRequest[]
+   207→  dataDeletionRequests DataDeletionRequest[]
+   208→
+   209→  @@index([ownerId])
+   210→}
+   211→
+   212→model WorkspaceMember {
+   213→  id           String   @id @default(cuid())
+   214→  workspaceId  String
+   215→  userId       String
+   216→  role         String   @default("MEMBER") // WorkspaceRole
+   217→  addedAt      DateTime @default(now())
+   218→  removedAt    DateTime?
+   219→  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+   220→  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+   221→
+   222→  @@unique([workspaceId, userId])
+   223→  @@index([userId])
+   224→}
+   225→
+   226→model WorkspaceInvitation {
+   227→  id           String   @id @default(cuid())
+   228→  workspaceId  String
+   229→  email        String
+   230→  emailLower   String
+   231→  role         String   @default("MEMBER")
+   232→  tokenHash    String   @unique
+   233→  invitedById  String
+   234→  inviteeId    String?
+   235→  expiresAt    DateTime
+   236→  acceptedAt   DateTime?
+   237→  revokedAt    DateTime?
+   238→  createdAt    DateTime @default(now())
+   239→  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+   240→  invitedBy    User      @relation("InvitationInviter", fields: [invitedById], references: [id])
+   241→  invitee      User?     @relation("InvitationInvitee", fields: [inviteeId], references: [id])
+   242→
+   243→  @@index([workspaceId])
+   244→  @@index([emailLower])
+   245→}
+   246→
+   247→// ===========================================================
+   248→// Projects & Environments
+   249→// ===========================================================
+   250→
+   251→model Project {
+   252→  id              String   @id @default(cuid())
+   253→  workspaceId     String
+   254→  name            String
+   255→  description     String?
+   256→  productionUrl   String
+   257→  productType     String   @default("web_app") // web_app | ecommerce | marketing | dashboard
+   258→  primaryLocale   String   @default("en")
+   259→  supportedLocales String  @default("en") // comma-separated
+   260→  defaultTimezone String   @default("UTC")
+   261→  targetCustomer  String?
+   262→  brandLogoUrl    String?
+   263→  brandColors     String?  // JSON
+   264→  scanSettings    String?  // JSON
+   265→  retentionDays   Int      @default(30)
+   266→  notificationPrefs String? // JSON
+   267→  status          String   @default("ACTIVE") // ProjectStatus
+   268→  createdAt       DateTime @default(now())
+   269→  updatedAt       DateTime @updatedAt
+   270→  createdById     String?
+   271→
+   272→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+   273→  createdBy       User?     @relation(fields: [createdById], references: [id])
+   274→  environments    ProjectEnvironment[]
+   275→  verifiedDomains VerifiedDomain[]
+   276→  scanProfiles    ScanProfile[]
+   277→  scanSchedules   ScanSchedule[]
+   278→  personas        Persona[]
+   279→  journeys        Journey[]
+   280→  scanRuns        ScanRun[]
+   281→  findings        Finding[]
+   282→  artifacts       Artifact[]
+   283→  visualBaselines VisualBaseline[]
+   284→  reports         Report[]
+   285→  projectSecrets  ProjectSecret[]
+   286→
+   287→  @@index([workspaceId])
+   288→  @@index([status])
+   289→}
+   290→
+   291→model ProjectEnvironment {
+   292→  id                  String   @id @default(cuid())
+   293→  projectId           String
+   294→  type                String   @default("PRODUCTION") // EnvironmentType
+   295→  baseUrl             String
+   296→  allowedHostnames    String   @default("") // comma-separated
+   297→  authMode            String   @default("NONE") // NONE | BASIC | FORM | OAUTH
+   298→  testCredentialsRef  String?  // secret vault key
+   299→  scanMode            String   @default("PASSIVE") // RunMode
+   300→  networkRestrictions String?  // JSON
+   301→  envVars             String?  // JSON (non-secret only)
+   302→  destructiveActionPolicy String? // JSON
+   303→  dataRetentionDays   Int      @default(30)
+   304→  enabled             Boolean  @default(true)
+   305→  createdAt           DateTime @default(now())
+   306→  updatedAt           DateTime @updatedAt
+   307→
+   308→  project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   309→  scanRuns            ScanRun[]
+   310→
+   311→  @@index([projectId])
+   312→}
+   313→
+   314→model VerifiedDomain {
+   315→  id                    String   @id @default(cuid())
+   316→  projectId             String
+   317→  domain                String
+   318→  domainNormalized      String
+   319→  verificationMethod    String   @default("DNS_TXT") // VerificationMethod
+   320→  verificationStatus    String   @default("PENDING") // VerificationStatus
+   321→  verifiedAt            DateTime?
+   322→  lastRevalidatedAt     DateTime?
+   323→  allowedSubdomains     Boolean  @default(false)
+   324→  initiatedById         String?
+   325→  createdAt             DateTime @default(now())
+   326→  updatedAt             DateTime @updatedAt
+   327→
+   328→  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   329→  challenges            DomainVerificationChallenge[]
+   330→
+   331→  @@unique([projectId, domainNormalized])
+   332→  @@index([projectId])
+   333→}
+   334→
+   335→model DomainVerificationChallenge {
+   336→  id              String   @id @default(cuid())
+   337→  verifiedDomainId String
+   338→  tokenHash       String   @unique
+   339→  tokenDisplay    String   // shown to user (random, not the hashed token)
+   340→  expiresAt       DateTime
+   341→  createdAt       DateTime @default(now())
+   342→  verifiedDomain  VerifiedDomain @relation(fields: [verifiedDomainId], references: [id], onDelete: Cascade)
+   343→
+   344→  @@index([verifiedDomainId])
+   345→}
+   346→
+   347→model ScanProfile {
+   348→  id              String   @id @default(cuid())
+   349→  projectId       String
+   350→  name            String
+   351→  description     String?
+   352→  maxPages        Int      @default(20)
+   353→  maxDepth        Int      @default(3)
+   354→  timeoutMs       Int      @default(60000)
+   355→  viewports       String   @default("mobile:390x844,tablet:768x1024,laptop:1366x768,desktop:1920x1080")
+   356→  locales         String   @default("en")
+   357→  browsers        String   @default("chromium")
+   358→  analyzers       String?  // JSON list of analyzer IDs; null = all
+   359→  journeyIds      String?  // JSON list
+   360→  runMode         String   @default("PASSIVE")
+   361→  createdAt       DateTime @default(now())
+   362→  updatedAt       DateTime @updatedAt
+   363→
+   364→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   365→  scanRuns        ScanRun[]
+   366→  scanSchedules   ScanSchedule[]
+   367→
+   368→  @@index([projectId])
+   369→}
+   370→
+   371→model ScanSchedule {
+   372→  id              String   @id @default(cuid())
+   373→  projectId       String
+   374→  scanProfileId   String?
+   375→  cron            String   // e.g. "0 9 * * 1" for weekly Monday 9am
+   376→  timezone        String   @default("UTC")
+   377→  enabled         Boolean  @default(true)
+   378→  lastRunAt       DateTime?
+   379→  nextRunAt       DateTime?
+   380→  createdAt       DateTime @default(now())
+   381→  updatedAt       DateTime @updatedAt
+   382→
+   383→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   384→  scanProfile     ScanProfile? @relation(fields: [scanProfileId], references: [id], onDelete: SetNull)
+   385→
+   386→  @@index([projectId])
+   387→  @@index([nextRunAt])
+   388→}
+   389→
+   390→model Persona {
+   391→  id              String   @id @default(cuid())
+   392→  projectId       String
+   393→  name            String
+   394→  description     String?
+   395→  locale          String   @default("en")
+   396→  viewport        String   @default("1366x768")
+   397→  credentialsRef  String?  // secret vault key
+   398→  createdAt       DateTime @default(now())
+   399→  updatedAt       DateTime @updatedAt
+   400→
+   401→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   402→
+   403→  @@index([projectId])
+   404→}
+   405→
+   406→// ===========================================================
+   407→// Journeys
+   408→// ===========================================================
+   409→
+   410→model Journey {
+   411→  id              String   @id @default(cuid())
+   412→  projectId       String
+   413→  name            String
+   414→  description     String?
+   415→  status          String   @default("DRAFT") // JourneyStatus: DRAFT | ACTIVE | ARCHIVED | DELETED
+   416→  entryUrl        String?  // optional override of project productionUrl
+   417→  personaId       String?  // optional Persona for credentials/locale/viewport
+   418→  currentVersion  Int      @default(1)
+   419→  createdById     String?
+   420→  createdAt       DateTime @default(now())
+   421→  updatedAt       DateTime @updatedAt
+   422→
+   423→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   424→  versions        JourneyVersion[]
+   425→  runs            JourneyRun[]
+   426→  createdBy       User?    @relation("JourneyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+   427→
+   428→  @@index([projectId])
+   429→  @@index([status])
+   430→}
+   431→
+   432→model JourneyVersion {
+   433→  id              String   @id @default(cuid())
+   434→  journeyId       String
+   435→  version         Int
+   436→  stepsJson       String   // JSON array of JourneyStep (validated by Zod)
+   437→  changeLog       String?  // optional description of changes
+   438→  createdBy       String?
+   439→  createdAt       DateTime @default(now())
+   440→
+   441→  journey         Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+   442→
+   443→  @@unique([journeyId, version])
+   444→  @@index([journeyId])
+   445→}
+   446→
+   447→model JourneyRun {
+   448→  id              String   @id @default(cuid())
+   449→  journeyId       String
+   450→  journeyVersion  Int
+   451→  scanRunId       String?  // parent scan run (null for standalone journey run)
+   452→  projectId       String
+   453→  workspaceId     String
+   454→  environmentId   String?
+   455→  personaId       String?
+   456→  status          String   @default("QUEUED") // JourneyRunStatus: QUEUED | RUNNING | COMPLETED | FAILED | CANCELLED
+   457→  runMode         String   @default("PASSIVE") // RunMode (inherited from scan run)
+   458→  trigger         String   @default("MANUAL") // JourneyTrigger: MANUAL | SCAN | SCHEDULED
+   459→  targetUrl       String
+   460→  viewport        String?
+   461→  locale          String?
+   462→  browser         String   @default("chromium")
+   463→  stepsTotal      Int      @default(0)
+   464→  stepsPassed     Int      @default(0)
+   465→  stepsFailed     Int      @default(0)
+   466→  stepsSkipped    Int      @default(0)
+   467→  startedAt       DateTime?
+   468→  completedAt     DateTime?
+   469→  failedReason    String?
+   470→  triggeredById   String?
+   471→  createdAt       DateTime @default(now())
+   472→  updatedAt       DateTime @updatedAt
+   473→
+   474→  journey         Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+   475→  scanRun         ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
+   476→  stepResults     JourneyStepResult[]
+   477→
+   478→  @@index([journeyId])
+   479→  @@index([scanRunId])
+   480→  @@index([projectId])
+   481→  @@index([workspaceId])
+   482→  @@index([status])
+   483→}
+   484→
+   485→model JourneyStepResult {
+   486→  id              String   @id @default(cuid())
+   487→  journeyRunId    String
+   488→  stepIndex       Int
+   489→  stepType        String   // JourneyStepType
+   490→  stepLabel       String?
+   491→  status          String   // PASS | FAIL | SKIPPED
+   492→  durationMs      Int      @default(0)
+   493→  error           String?
+   494→  beforeScreenshotId String? // Artifact id
+   495→  afterScreenshotId  String? // Artifact id
+   496→  consoleErrors   Int      @default(0)
+   497→  networkErrors   Int      @default(0)
+   498→  metadataJson    String?  // JSON (e.g. selector, url, assertion result)
+   499→  createdAt       DateTime @default(now())
+   500→
+   501→  journeyRun      JourneyRun @relation(fields: [journeyRunId], references: [id], onDelete: Cascade)
+   502→
+   503→  @@index([journeyRunId])
+   504→  @@index([status])
+   505→}
+   506→
+   507→// Project-scoped secret vault for {{secret.NAME}} references in journey steps.
+   508→// Values are AES-256-GCM encrypted with the master key. Keys are returned to the UI;
+   509→// values are only ever decrypted inside the worker (never serialized to API responses).
+   510→model ProjectSecret {
+   511→  id              String   @id @default(cuid())
+   512→  projectId       String
+   513→  key             String   // [a-zA-Z0-9_]+, max 64 chars
+   514→  valueEncrypted  String   // JSON EncryptedValue
+   515→  description     String?
+   516→  createdById     String?
+   517→  createdAt       DateTime @default(now())
+   518→  updatedAt       DateTime @updatedAt
+   519→
+   520→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   521→  createdBy       User?    @relation("ProjectSecretCreator", fields: [createdById], references: [id], onDelete: SetNull)
+   522→
+   523→  @@unique([projectId, key])
+   524→  @@index([projectId])
+   525→}
+   526→
+   527→// ===========================================================
+   528→// Runs & pages
+   529→// ===========================================================
+   530→
+   531→model ScanRun {
+   532→  id              String   @id @default(cuid())
+   533→  projectId       String
+   534→  environmentId   String?
+   535→  scanProfileId   String?
+   536→  workspaceId     String
+   537→  status          String   @default("QUEUED") // RunStatus
+   538→  trigger         String   @default("MANUAL") // RunTrigger
+   539→  runMode         String   @default("PASSIVE") // RunMode
+   540→  triggeredById   String?
+   541→  configSnapshot  String   // JSON
+   542→  startedAt       DateTime?
+   543→  completedAt     DateTime?
+   544→  cancelledAt     DateTime?
+   545→  failedReason    String?
+   546→  pagesDiscovered Int      @default(0)
+   547→  pagesAnalyzed   Int      @default(0)
+   548→  findingsCount   Int      @default(0)
+   549→  blockerCount    Int      @default(0)
+   550→  score           Float?
+   551→  previousScore   Float?
+   552→  // Phase 8 — AI run summary. `aiSummaryJson` holds the full structured
+   553→  // RunSummary object (executiveSummary / topIssues / deliveryReadiness /
+   554→  // recommendation); `aiSummary` holds the short plain-language
+   555→  // executiveSummary string for fast display. Both null until generated.
+   556→  aiSummary       String?
+   557→  aiSummaryJson   String?
+   558→  // Phase 8 — AI journey proposal. Holds the latest AI-generated journey
+   559→  // proposal JSON ({ name, entryUrl, steps, rationale }) for user review.
+   560→  // Null until generated. User must explicitly accept the proposal to create
+   561→  // a Journey.
+   562→  aiJourneyProposalJson String?
+   563→  // Phase 8 — AI client-friendly report language. Holds the structured
+   564→  // ClientReport JSON ({ clientSummary, deliveryReadiness, positiveNotes,
+   565→  // attentionItems }) for the client-facing report. Null until generated.
+   566→  aiClientReportJson String?
+   567→  // Phase 8 — AI semantic finding grouping. Holds the structured
+   568→  // SemanticGrouping JSON ({ groups: [{ groupId, label, findingIds[],
+   569→  // sharedRootCause }] }) so reports can present "one underlying issue"
+   570→  // instead of listing every duplicate individually. Null until generated.
+   571→  aiSemanticGroupingJson String?
+   572→  createdAt       DateTime @default(now())
+   573→  updatedAt       DateTime @updatedAt
+   574→
+   575→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   576→  environment     ProjectEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+   577→  scanProfile     ScanProfile? @relation(fields: [scanProfileId], references: [id], onDelete: SetNull)
+   578→  triggeredBy     User?    @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+   579→  events          ScanRunEvent[]
+   580→  pages           ScanPage[]
+   581→  networkRequests NetworkRequest[]
+   582→  consoleEvents   BrowserConsoleEvent[]
+   583→  findings        Finding[]
+   584→  artifacts       Artifact[]
+   585→  reports         Report[]
+   586→  journeyRuns     JourneyRun[]
+   587→
+   588→  @@index([projectId])
+   589→  @@index([workspaceId])
+   590→  @@index([status])
+   591→  @@index([createdAt])
+   592→}
+   593→
+   594→model ScanRunEvent {
+   595→  id              String   @id @default(cuid())
+   596→  runId           String
+   597→  eventType       String   // run.queued | run.validating | ...
+   598→  payloadJson     String   // JSON
+   599→  sequence        Int
+   600→  createdAt       DateTime @default(now())
+   601→
+   602→  run             ScanRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+   603→
+   604→  @@unique([runId, sequence])
+   605→  @@index([runId, sequence])
+   606→}
+   607→
+   608→model ScanPage {
+   609→  id              String   @id @default(cuid())
+   610→  runId           String
+   611→  url             String
+   612→  normalizedUrl   String
+   613→  title           String?
+   614→  httpStatus      Int?
+   615→  contentType     String?
+   616→  redirectChain   String?  // JSON
+   617→  lang            String?
+   618→  dir             String?
+   619→  canonical       String?
+   620→  depth           Int      @default(0)
+   621→  discoveredAt    DateTime @default(now())
+   622→  analyzedAt      DateTime?
+   623→  pageMetrics     ScanPageMetric?
+   624→
+   625→  run             ScanRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+   626→
+   627→  @@index([runId])
+   628→  @@index([normalizedUrl])
+   629→}
+   630→
+   631→model ScanPageMetric {
+   632→  id              String   @id @default(cuid())
+   633→  pageId          String   @unique
+   634→  ttfb            Int?
+   635→  domContentLoaded Int?
+   636→  loadEvent       Int?
+   637→  lcp             Int?
+   638→  cls             Float?
+   639→  inp             Int?
+   640→  totalBytes      Int?
+   641→  requestCount    Int?
+   642→  largestResources String? // JSON
+   643→  longTasks       Int?
+   644→  renderBlocking  Int?
+   645→
+   646→  page            ScanPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+   647→}
+   648→
+   649→model NetworkRequest {
+   650→  id              String   @id @default(cuid())
+   651→  runId           String
+   652→  url             String
+   653→  method          String
+   654→  status          Int?
+   655→  contentType     String?
+   656→  sizeBytes       Int?
+   657→  durationMs      Int?
+   658→  failed          Boolean  @default(false)
+   659→  failureReason   String?
+   660→  blocked         Boolean  @default(false)
+   661→  blockReason     String?
+   662→  isRedirect      Boolean  @default(false)
+   663→  redirectedTo    String?
+   664→  createdAt       DateTime @default(now())
+   665→
+   666→  run             ScanRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+   667→
+   668→  @@index([runId])
+   669→}
+   670→
+   671→model BrowserConsoleEvent {
+   672→  id              String   @id @default(cuid())
+   673→  runId           String
+   674→  pageId          String?
+   675→  level           String   // error | warning | info | log
+   676→  message         String
+   677→  stack           String?
+   678→  source          String?
+   679→  redacted        Boolean  @default(true)
+   680→  createdAt       DateTime @default(now())
+   681→
+   682→  run             ScanRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+   683→
+   684→  @@index([runId])
+   685→  @@index([level])
+   686→}
+   687→
+   688→// ===========================================================
+   689→// Findings
+   690→// ===========================================================
+   691→
+   692→model Finding {
+   693→  id              String   @id @default(cuid())
+   694→  workspaceId     String
+   695→  projectId       String
+   696→  runId           String?
+   697→  checkId         String
+   698→  category        String   // FindingCategory
+   699→  severity        String   // FindingSeverity
+   700→  status          String   @default("OPEN") // FindingStatus
+   701→  confidence      String   @default("HIGH") // FindingConfidence
+   702→  businessImpact  String?
+   703→  title           String
+   704→  description     String?
+   705→  remediation     String?
+   706→  fingerprint     String
+   707→  affectedUrl     String
+   708→  normalizedUrl   String
+   709→  viewport        String?
+   710→  locale          String?
+   711→  browser         String?
+   712→  domSelector     String?
+   713→  evidence        String?  // JSON
+   714→  aiExplanation   String?
+   715→  aiSummary       String?
+   716→  aiRemediation   String?  // JSON: { summary, steps[], estimatedEffort }
+   717→  firstSeenAt     DateTime @default(now())
+   718→  lastSeenAt      DateTime @default(now())
+   719→  resolvedAt      DateTime?
+   720→  assignedToId    String?
+   721→  tags            String   @default("")
+   722→  createdAt       DateTime @default(now())
+   723→  updatedAt       DateTime @updatedAt
+   724→
+   725→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   726→  run             ScanRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+   727→  assignee        User?    @relation("FindingAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+   728→  occurrences     FindingOccurrence[]
+   729→  comments        FindingComment[]
+   730→  statusHistory   FindingStatusHistory[]
+   731→  suppressions    FindingSuppression[]
+   732→
+   733→  @@unique([fingerprint])
+   734→  @@index([workspaceId])
+   735→  @@index([projectId])
+   736→  @@index([runId])
+   737→  @@index([severity])
+   738→  @@index([status])
+   739→  @@index([category])
+   740→  @@index([assignedToId])
+   741→  @@index([lastSeenAt])
+   742→}
+   743→
+   744→model FindingOccurrence {
+   745→  id              String   @id @default(cuid())
+   746→  findingId       String
+   747→  runId           String?
+   748→  viewport        String?
+   749→  locale          String?
+   750→  browser         String?
+   751→  evidence        String?  // JSON
+   752→  screenshotArtifactId String?
+   753→  occurredAt      DateTime @default(now())
+   754→
+   755→  finding         Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+   756→
+   757→  @@index([findingId])
+   758→  @@index([runId])
+   759→}
+   760→
+   761→model FindingComment {
+   762→  id              String   @id @default(cuid())
+   763→  findingId       String
+   764→  authorId        String
+   765→  body            String
+   766→  createdAt       DateTime @default(now())
+   767→  updatedAt       DateTime @updatedAt
+   768→
+   769→  finding         Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+   770→  author          User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+   771→
+   772→  @@index([findingId])
+   773→}
+   774→
+   775→model FindingStatusHistory {
+   776→  id              String   @id @default(cuid())
+   777→  findingId       String
+   778→  fromStatus      String
+   779→  toStatus        String
+   780→  reason          String?
+   781→  changedById     String?
+   782→  changedAt       DateTime @default(now())
+   783→
+   784→  finding         Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+   785→  changedBy       User?    @relation(fields: [changedById], references: [id], onDelete: SetNull)
+   786→
+   787→  @@index([findingId])
+   788→}
+   789→
+   790→model FindingSuppression {
+   791→  id              String   @id @default(cuid())
+   792→  findingId       String?
+   793→  workspaceId     String
+   794→  projectId       String?
+   795→  checkId         String?
+   796→  fingerprint     String?
+   797→  reason          String
+   798→  createdById     String
+   799→  expiresAt       DateTime?
+   800→  createdAt       DateTime @default(now())
+   801→  revokedAt       DateTime?
+   802→
+   803→  finding         Finding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+   804→  createdBy       User     @relation("FindingSuppressionCreator", fields: [createdById], references: [id])
+   805→
+   806→  @@index([workspaceId])
+   807→  @@index([findingId])
+   808→  @@index([fingerprint])
+   809→}
+   810→
+   811→// ===========================================================
+   812→// Artifacts & visual regression
+   813→// ===========================================================
+   814→
+   815→model Artifact {
+   816→  id              String   @id @default(cuid())
+   817→  workspaceId     String
+   818→  projectId       String
+   819→  runId           String?
+   820→  type            String   // ArtifactType
+   821→  storageKey      String
+   822→  sizeBytes       Int
+   823→  hashSha256      String
+   824→  mimeType        String
+   825→  encryptionMeta  String?  // JSON
+   826→  retentionExpiresAt DateTime?
+   827→  createdAt       DateTime @default(now())
+   828→
+   829→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   830→  run             ScanRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+   831→  visualComparisonsAsBefore VisualComparison[] @relation("VisualComparisonBefore")
+   832→  visualComparisonsAsAfter VisualComparison[] @relation("VisualComparisonAfter")
+   833→  visualComparisonDiffs    VisualComparison[] @relation("VisualComparisonDiff")
+   834→
+   835→  @@index([workspaceId])
+   836→  @@index([projectId])
+   837→  @@index([runId])
+   838→  @@index([type])
+   839→}
+   840→
+   841→model VisualBaseline {
+   842→  id              String   @id @default(cuid())
+   843→  projectId       String
+   844→  url             String
+   845→  viewport        String
+   846→  locale          String
+   847→  browser         String
+   848→  artifactId      String
+   849→  approvedById    String?
+   850→  version         Int      @default(1)
+   851→  createdAt       DateTime @default(now())
+   852→
+   853→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   854→
+   855→  @@unique([projectId, url, viewport, locale, browser])
+   856→  @@index([projectId])
+   857→}
+   858→
+   859→model VisualComparison {
+   860→  id              String   @id @default(cuid())
+   861→  baselineId      String
+   862→  afterArtifactId String
+   863→  diffArtifactId  String?
+   864→  diffPercentage  Float
+   865→  threshold       Float    @default(0.1)
+   866→  passed          Boolean
+   867→  createdAt       DateTime @default(now())
+   868→
+   869→  before          Artifact @relation("VisualComparisonBefore", fields: [baselineId], references: [id], onDelete: Cascade)
+   870→  after           Artifact @relation("VisualComparisonAfter", fields: [afterArtifactId], references: [id], onDelete: Cascade)
+   871→  diff            Artifact? @relation("VisualComparisonDiff", fields: [diffArtifactId], references: [id], onDelete: SetNull)
+   872→
+   873→  @@index([baselineId])
+   874→}
+   875→
+   876→// ===========================================================
+   877→// Reports
+   878→// ===========================================================
+   879→
+   880→model Report {
+   881→  id              String   @id @default(cuid())
+   882→  projectId       String
+   883→  runId           String?
+   884→  workspaceId     String
+   885→  type            String   @default("TECHNICAL") // TECHNICAL | CLIENT
+   886→  status          String   @default("DRAFT") // ReportStatus
+   887→  title           String
+   888→  sectionsJson    String   // JSON
+   889→  score           Float?
+   890→  summaryJson     String?  // JSON
+   891→  createdById     String?
+   892→  publishedAt     DateTime?
+   893→  createdAt       DateTime @default(now())
+   894→  updatedAt       DateTime @updatedAt
+   895→
+   896→  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   897→  run             ScanRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+   898→  createdBy       User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+   899→  shares          ReportShare[]
+   900→  approvals       ReportApproval[]
+   901→
+   902→  @@index([projectId])
+   903→  @@index([workspaceId])
+   904→  @@index([status])
+   905→}
+   906→
+   907→model ReportShare {
+   908→  id              String   @id @default(cuid())
+   909→  reportId        String
+   910→  tokenHash       String   @unique
+   911→  passwordHash    String?
+   912→  expiresAt       DateTime?
+   913→  emailRestriction String?
+   914→  revokedAt       DateTime?
+   915→  viewCount       Int      @default(0)
+   916→  lastViewedAt    DateTime?
+   917→  createdById     String?
+   918→  createdAt       DateTime @default(now())
+   919→
+   920→  report          Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+   921→  createdBy       User?    @relation("ShareCreator", fields: [createdById], references: [id], onDelete: SetNull)
+   922→
+   923→  @@index([reportId])
+   924→  @@index([createdById])
+   925→}
+   926→
+   927→model ReportApproval {
+   928→  id              String   @id @default(cuid())
+   929→  reportId        String
+   930→  approverId      String
+   931→  approved        Boolean
+   932→  comment         String?
+   933→  createdAt       DateTime @default(now())
+   934→
+   935→  report          Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+   936→  approver        User     @relation(fields: [approverId], references: [id], onDelete: Cascade)
+   937→
+   938→  @@index([reportId])
+   939→}
+   940→
+   941→// ===========================================================
+   942→// Integrations & webhooks
+   943→// ===========================================================
+   944→
+   945→model Integration {
+   946→  id              String   @id @default(cuid())
+   947→  workspaceId     String
+   948→  type            String   // IntegrationType
+   949→  name            String
+   950→  config          String?  // JSON (non-secret)
+   951→  enabled         Boolean  @default(true)
+   952→  createdAt       DateTime @default(now())
+   953→  updatedAt       DateTime @updatedAt
+   954→
+   955→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+   956→  secrets         IntegrationSecret[]
+   957→
+   958→  @@index([workspaceId])
+   959→}
+   960→
+   961→model IntegrationSecret {
+   962→  id              String   @id @default(cuid())
+   963→  integrationId   String
+   964→  key             String
+   965→  valueEncrypted  String   // JSON EncryptedValue
+   966→  createdAt       DateTime @default(now())
+   967→  updatedAt       DateTime @updatedAt
+   968→
+   969→  integration     Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+   970→
+   971→  @@unique([integrationId, key])
+   972→}
+   973→
+   974→model DeploymentHook {
+   975→  id              String   @id @default(cuid())
+   976→  projectId       String
+   977→  environmentId   String?
+   978→  workspaceId     String
+   979→  publicId        String   @unique
+   980→  secretHash      String
+   981→  branchFilter    String?
+   982→  scanProfileId   String?
+   983→  enabled         Boolean  @default(true)
+   984→  lastTriggeredAt DateTime?
+   985→  createdAt       DateTime @default(now())
+   986→  updatedAt       DateTime @updatedAt
+   987→
+   988→  @@index([projectId])
+   989→  @@index([workspaceId])
+   990→}
+   991→
+   992→model OutgoingWebhook {
+   993→  id              String   @id @default(cuid())
+   994→  workspaceId     String
+   995→  url             String
+   996→  events          String   // comma-separated event types
+   997→  secretHash      String
+   998→  enabled         Boolean  @default(true)
+   999→  lastDeliveryAt  DateTime?
+  1000→  consecutiveFailures Int  @default(0)
+  1001→  disabledAt      DateTime?
+  1002→  createdAt       DateTime @default(now())
+  1003→  updatedAt       DateTime @updatedAt
+  1004→
+  1005→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  1006→  deliveries      OutgoingWebhookDelivery[]
+  1007→
+  1008→  @@index([workspaceId])
+  1009→}
+  1010→
+  1011→model OutgoingWebhookDelivery {
+  1012→  id              String   @id @default(cuid())
+  1013→  webhookId       String
+  1014→  eventId         String
+  1015→  eventType       String
+  1016→  payloadJson     String
+  1017→  status          Int?
+  1018→  responseSnippet String?
+  1019→  deliveredAt     DateTime @default(now())
+  1020→  nextRetryAt     DateTime?
+  1021→  retryCount      Int      @default(0)
+  1022→  success         Boolean  @default(false)
+  1023→
+  1024→  webhook         OutgoingWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  1025→
+  1026→  @@index([webhookId])
+  1027→  @@index([nextRetryAt])
+  1028→}
+  1029→
+  1030→model IncomingWebhookEvent {
+  1031→  id              String   @id @default(cuid())
+  1032→  source          String   // stripe | deployment_hook | github | ...
+  1033→  externalId      String
+  1034→  payloadJson     String
+  1035→  processedAt     DateTime?
+  1036→  processingError String?
+  1037→  createdAt       DateTime @default(now())
+  1038→
+  1039→  @@unique([source, externalId])
+  1040→  @@index([source])
+  1041→}
+  1042→
+  1043→// ===========================================================
+  1044→// Billing & usage
+  1045→// ===========================================================
+  1046→
+  1047→model Plan {
+  1048→  id              String   @id @default(cuid())
+  1049→  code            String   @unique // FREE | STARTER | PRO | AGENCY
+  1050→  name            String
+  1051→  description     String?
+  1052→  priceMonthly    Int      @default(0) // cents
+  1053→  stripePriceId   String?
+  1054→  maxProjects     Int      @default(1)
+  1055→  maxRunsPerMonth Int      @default(2)
+  1056→  maxPagesPerRun  Int      @default(5)
+  1057→  browsers        String   @default("chromium")
+  1058→  scheduling      Boolean  @default(false)
+  1059→  whiteLabel      Boolean  @default(false)
+  1060→  aiEnrichment    Boolean  @default(false)
+  1061→  journeys        Boolean  @default(false)
+  1062→  visualBaselines Boolean  @default(false)
+  1063→  teamMembers     Int      @default(1)
+  1064→  retentionDays   Int      @default(7)
+  1065→  priorityQueue   Boolean  @default(false)
+  1066→  createdAt       DateTime @default(now())
+  1067→  updatedAt       DateTime @updatedAt
+  1068→  subscriptions  Subscription[]
+  1069→}
+  1070→
+  1071→model Subscription {
+  1072→  id              String   @id @default(cuid())
+  1073→  workspaceId     String
+  1074→  planId          String
+  1075→  status          String   @default("TRIALING") // SubscriptionStatus
+  1076→  stripeCustomerId String?
+  1077→  stripeSubscriptionId String?
+  1078→  currentPeriodStart DateTime?
+  1079→  currentPeriodEnd DateTime?
+  1080→  cancelAtPeriodEnd Boolean @default(false)
+  1081→  trialEndsAt     DateTime?
+  1082→  createdAt       DateTime @default(now())
+  1083→  updatedAt       DateTime @updatedAt
+  1084→
+  1085→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  1086→  plan            Plan      @relation(fields: [planId], references: [id])
+  1087→  events          SubscriptionEvent[]
+  1088→
+  1089→  @@index([workspaceId])
+  1090→}
+  1091→
+  1092→model SubscriptionEvent {
+  1093→  id              String   @id @default(cuid())
+  1094→  subscriptionId  String
+  1095→  eventType       String
+  1096→  payloadJson     String
+  1097→  createdAt       DateTime @default(now())
+  1098→
+  1099→  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  1100→
+  1101→  @@index([subscriptionId])
+  1102→}
+  1103→
+  1104→model UsageLedger {
+  1105→  id              String   @id @default(cuid())
+  1106→  workspaceId     String
+  1107→  projectId       String?
+  1108→  runId           String?
+  1109→  eventType       String   // RUN_CREATED | PAGE_ANALYZED | ...
+  1110→  quantity        Int      @default(1)
+  1111→  idempotencyKey  String?  @unique
+  1112→  metadataJson    String?
+  1113→  createdAt       DateTime @default(now())
+  1114→
+  1115→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  1116→
+  1117→  @@index([workspaceId, createdAt])
+  1118→  @@index([eventType])
+  1119→}
+  1120→
+  1121→model UsagePeriod {
+  1122→  id              String   @id @default(cuid())
+  1123→  workspaceId     String
+  1124→  periodStart     DateTime
+  1125→  periodEnd       DateTime
+  1126→  runsUsed        Int      @default(0)
+  1127→  pagesAnalyzed   Int      @default(0)
+  1128→  aiTokensUsed    Int      @default(0)
+  1129→  reportsGenerated Int     @default(0)
+  1130→  createdAt       DateTime @default(now())
+  1131→  updatedAt       DateTime @updatedAt
+  1132→
+  1133→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  1134→
+  1135→  @@unique([workspaceId, periodStart])
+  1136→  @@index([workspaceId])
+  1137→}
+  1138→
+  1139→// ===========================================================
+  1140→// Notifications
+  1141→// ===========================================================
+  1142→
+  1143→model Notification {
+  1144→  id              String   @id @default(cuid())
+  1145→  userId          String
+  1146→  workspaceId     String?
+  1147→  type            String   // NotificationType
+  1148→  title           String
+  1149→  body            String?
+  1150→  link            String?
+  1151→  readAt          DateTime?
+  1152→  createdAt       DateTime @default(now())
+  1153→
+  1154→  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  1155→  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  1156→
+  1157→  @@index([userId, readAt])
+  1158→  @@index([workspaceId])
+  1159→}
+  1160→
+  1161→model NotificationPreference {
+  1162→  id              String   @id @default(cuid())
+  1163→  userId          String
+  1164→  type            String   // NotificationType
+  1165→  emailEnabled    Boolean  @default(true)
+  1166→  inAppEnabled    Boolean  @default(true)
+  1167→  webhookEnabled  Boolean  @default(false)
+  1168→  createdAt       DateTime @default(now())
+  1169→  updatedAt       DateTime @updatedAt
+  1170→
+  1171→  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  1172→
+  1173→  @@unique([userId, type])
+  1174→}
+  1175→
+  1176→// ===========================================================
+  1177→// Platform: API keys, audit logs, security events, AI usage, privacy
+  1178→// ===========================================================
+  1179→
+  1180→model ApiKey {
+  1181→  id              String   @id @default(cuid())
+  1182→  workspaceId     String
+  1183→  name            String
+  1184→  publicId        String   @unique
+  1185→  secretHash      String   @unique
+  1186→  scopes          String   @default("") // comma-separated
+  1187→  lastUsedAt      DateTime?
+  1188→  expiresAt       DateTime?
+  1189→  revokedAt       DateTime?
+  1190→  createdById     String?
+  1191→  createdAt       DateTime @default(now())
+  1192→
+  1193→  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  1194→  createdBy       User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  1195→
+  1196→  @@index([workspaceId])
+  1197→  @@index([publicId])
+  1198→}
+  1199→
+  1200→model AuditLog {
+  1201→  id              String   @id @default(cuid())
+  1202→  actorType       String   @default("USER") // USER | SYSTEM | API_KEY | SUPPORT
+  1203→  actorId         String?
+  1204→  workspaceId     String?
+  1205→  action          String   // AuditAction
+  1206→  targetType      String?
+  1207→  targetId        String?
+  1208→  ipHash          String?
+  1209→  userAgentSummary String?
+  1210→  requestId       String?
+  1211→  metadataJson    String?
+  1212→  outcome         String   @default("SUCCESS") // SUCCESS | FAILURE | DENIED
+  1213→  createdAt       DateTime @default(now())
+  1214→
+  1215→  user            User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  1216→  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  1217→
+  1218→  @@index([workspaceId, createdAt])
+  1219→  @@index([actorId])
+  1220→  @@index([action])
+  1221→}
+  1222→
+  1223→model SecurityEvent {
+  1224→  id              String   @id @default(cuid())
+  1225→  type            String   // SecurityEventType
+  1226→  severity        String   @default("WARN") // INFO | WARN | HIGH | CRITICAL
+  1227→  userId          String?
+  1228→  workspaceId     String?
+  1229→  ipHash          String?
+  1230→  requestId       String?
+  1231→  metadataJson    String?
+  1232→  createdAt       DateTime @default(now())
+  1233→
+  1234→  @@index([type, createdAt])
+  1235→  @@index([userId])
+  1236→  @@index([workspaceId])
+  1237→}
+  1238→
+  1239→model LlmUsageRecord {
+  1240→  id              String   @id @default(cuid())
+  1241→  workspaceId     String?
+  1242→  projectId       String?
+  1243→  runId           String?
+  1244→  userId          String?
+  1245→  provider        String
+  1246→  model           String
+  1247→  promptTokens    Int      @default(0)
+  1248→  completionTokens Int     @default(0)
+  1249→  estimatedCostUsd Float   @default(0)
+  1250→  taskType        String
+  1251→  promptVersion   String
+  1252→  createdAt       DateTime @default(now())
+  1253→
+  1254→  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  1255→  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  1256→
+  1257→  @@index([workspaceId, createdAt])
+  1258→  @@index([runId])
+  1259→}
+  1260→
+  1261→model DataExportRequest {
+  1262→  id              String   @id @default(cuid())
+  1263→  workspaceId     String?
+  1264→  userId          String
+  1265→  status          String   @default("PENDING") // PENDING | PROCESSING | READY | FAILED
+  1266→  artifactPath    String?
+  1267→  requestedAt     DateTime @default(now())
+  1268→  completedAt     DateTime?
+  1269→
+  1270→  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  1271→  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  1272→
+  1273→  @@index([userId])
+  1274→}
+  1275→
+  1276→model DataDeletionRequest {
+  1277→  id              String   @id @default(cuid())
+  1278→  workspaceId     String?
+  1279→  userId          String
+  1280→  status          String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  1281→  requestedAt     DateTime @default(now())
+  1282→  completedAt     DateTime?
+  1283→
+  1284→  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  1285→  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  1286→
+  1287→  @@index([userId])
+  1288→}
+  1289→
+  1290→// ===========================================================
+  1291→// Queue jobs (sandbox replacement for BullMQ/Redis)
+  1292→// ===========================================================
+  1293→
+  1294→model QueueJob {
+  1295→  id              String   @id @default(cuid())
+  1296→  queue           String   // scan-orchestration | page-analysis | ...
+  1297→  payloadJson     String
+  1298→  status          String   @default("WAITING") // WAITING | ACTIVE | COMPLETED | FAILED | DELAYED
+  1299→  priority        Int      @default(0)
+  1300→  attempts        Int      @default(0)
+  1301→  maxAttempts     Int      @default(3)
+  1302→  runAt           DateTime @default(now())
+  1303→  startedAt       DateTime?
+  1304→  completedAt     DateTime?
+  1305→  failedReason    String?
+  1306→  resultJson      String?
+  1307→  workspaceId     String?
+  1308→  correlationId   String?
+  1309→  createdAt       DateTime @default(now())
+  1310→  updatedAt       DateTime @updatedAt
+  1311→
+  1312→  @@index([queue, status, runAt])
+  1313→  @@index([workspaceId])
+  1314→  @@index([correlationId])
+  1315→}
+  1316→
+  1317→// ===========================================================
+  1318→// Feature flags
+  1319→// ===========================================================
+  1320→
+  1321→model FeatureFlag {
+  1322→  id              String   @id @default(cuid())
+  1323→  key             String   @unique
+  1324→  description     String?
+  1325→  enabled         Boolean  @default(false)
+  1326→  rolloutPercent  Int      @default(0)
+  1327→  updatedAt       DateTime @updatedAt
+  1328→}
+  1329→
