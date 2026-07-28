@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
     'sharp',
     'z-ai-web-dev-sdk',
   ],
+  allowedDevOrigins: [
+    '*.space-z.ai',
+  ],
   experimental: {
     optimizePackageImports: ['lucide-react', 'date-fns'],
   },
