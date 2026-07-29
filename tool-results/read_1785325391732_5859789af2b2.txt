@@ -1,0 +1,813 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback, useMemo } from 'react'
+     4→import Link from 'next/link'
+     5→import { useParams } from 'next/navigation'
+     6→import { Button } from '@/components/ui/button'
+     7→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     8→import { Badge } from '@/components/ui/badge'
+     9→import { Skeleton } from '@/components/ui/skeleton'
+    10→import { Input } from '@/components/ui/input'
+    11→import {
+    12→  Table,
+    13→  TableBody,
+    14→  TableCell,
+    15→  TableHead,
+    16→  TableHeader,
+    17→  TableRow,
+    18→} from '@/components/ui/table'
+    19→import {
+    20→  Select,
+    21→  SelectContent,
+    22→  SelectItem,
+    23→  SelectTrigger,
+    24→  SelectValue,
+    25→} from '@/components/ui/select'
+    26→import {
+    27→  DropdownMenu,
+    28→  DropdownMenuContent,
+    29→  DropdownMenuItem,
+    30→  DropdownMenuLabel,
+    31→  DropdownMenuSeparator,
+    32→  DropdownMenuTrigger,
+    33→} from '@/components/ui/dropdown-menu'
+    34→import {
+    35→  ShieldCheck,
+    36→  ArrowLeft,
+    37→  Bug,
+    38→  Search,
+    39→  ChevronLeft,
+    40→  ChevronRight,
+    41→  ChevronUp,
+    42→  ChevronDown,
+    43→  SlidersHorizontal,
+    44→  X,
+    45→  Globe,
+    46→  Clock,
+    47→  LayoutDashboard,
+    48→  CheckCircle2,
+    49→  AlertTriangle,
+    50→  Loader2,
+    51→  FileX,
+    52→} from 'lucide-react'
+    53→
+    54→// ─── Types ───────────────────────────────────────────────────────
+    55→
+    56→interface FindingItem {
+    57→  id: string
+    58→  workspaceId: string
+    59→  projectId: string
+    60→  runId: string | null
+    61→  checkId: string
+    62→  category: string
+    63→  severity: string
+    64→  status: string
+    65→  confidence: string
+    66→  title: string
+    67→  description: string | null
+    68→  affectedUrl: string
+    69→  normalizedUrl: string
+    70→  viewport: string | null
+    71→  locale: string | null
+    72→  browser: string | null
+    73→  tags: string[]
+    74→  assignedToId: string | null
+    75→  assigneeName: string | null
+    76→  firstSeenAt: string
+    77→  lastSeenAt: string
+    78→  resolvedAt: string | null
+    79→  createdAt: string
+    80→  updatedAt: string
+    81→  occurrenceCount: number
+    82→  isSuppressed: boolean
+    83→}
+    84→
+    85→interface FindingsResponse {
+    86→  items: FindingItem[]
+    87→  nextCursor: string | null
+    88→  totalApprox: number
+    89→}
+    90→
+    91→interface ProjectBrief {
+    92→  id: string
+    93→  name: string
+    94→  workspace: { id: string; name: string; slug: string }
+    95→}
+    96→
+    97→// ─── Constants ────────────────────────────────────────────────────
+    98→
+    99→const SEVERITIES = ['BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO'] as const
+   100→
+   101→const STATUSES = [
+   102→  'OPEN',
+   103→  'ACKNOWLEDGED',
+   104→  'IN_PROGRESS',
+   105→  'RESOLVED',
+   106→  'REOPENED',
+   107→  'IGNORED',
+   108→  'ACCEPTED_RISK',
+   109→  'FALSE_POSITIVE',
+   110→] as const
+   111→
+   112→const SORT_OPTIONS = [
+   113→  { value: 'lastSeenAt', label: 'Last Seen' },
+   114→  { value: 'firstSeenAt', label: 'First Seen' },
+   115→  { value: 'severity', label: 'Severity' },
+   116→  { value: 'title', label: 'Title' },
+   117→] as const
+   118→
+   119→type SortField = (typeof SORT_OPTIONS)[number]['value']
+   120→type SortOrder = 'asc' | 'desc'
+   121→
+   122→const PAGE_SIZE = 25
+   123→
+   124→// ─── Helpers ─────────────────────────────────────────────────────
+   125→
+   126→function relativeTime(date: string): string {
+   127→  const diff = Date.now() - new Date(date).getTime()
+   128→  const mins = Math.floor(diff / 60_000)
+   129→  if (mins < 1) return 'just now'
+   130→  if (mins < 60) return `${mins}m ago`
+   131→  const hours = Math.floor(mins / 60)
+   132→  if (hours < 24) return `${hours}h ago`
+   133→  const days = Math.floor(hours / 24)
+   134→  if (days < 30) return `${days}d ago`
+   135→  return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+   136→}
+   137→
+   138→function severityColor(severity: string): string {
+   139→  switch (severity) {
+   140→    case 'BLOCKER':
+   141→      return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800'
+   142→    case 'CRITICAL':
+   143→      return 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 border-orange-200 dark:border-orange-800'
+   144→    case 'MAJOR':
+   145→      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+   146→    case 'MINOR':
+   147→      return 'bg-lime-100 text-lime-800 dark:bg-lime-900/40 dark:text-lime-300 border-lime-200 dark:border-lime-800'
+   148→    case 'INFO':
+   149→      return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+   150→    default:
+   151→      return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+   152→  }
+   153→}
+   154→
+   155→function statusColor(status: string): string {
+   156→  switch (status) {
+   157→    case 'OPEN':
+   158→      return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+   159→    case 'ACKNOWLEDGED':
+   160→      return 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300'
+   161→    case 'IN_PROGRESS':
+   162→      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+   163→    case 'RESOLVED':
+   164→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+   165→    case 'REOPENED':
+   166→      return 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300'
+   167→    case 'IGNORED':
+   168→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+   169→    case 'ACCEPTED_RISK':
+   170→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+   171→    case 'FALSE_POSITIVE':
+   172→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+   173→    default:
+   174→      return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+   175→  }
+   176→}
+   177→
+   178→function formatStatus(status: string): string {
+   179→  return status
+   180→    .replace(/_/g, ' ')
+   181→    .replace(/\b\w/g, (c) => c.toUpperCase())
+   182→}
+   183→
+   184→function truncateUrl(url: string, maxLen = 60): string {
+   185→  if (url.length <= maxLen) return url
+   186→  return url.slice(0, maxLen - 3) + '...'
+   187→}
+   188→
+   189→// ─── Component ────────────────────────────────────────────────────
+   190→
+   191→export default function FindingsTablePage() {
+   192→  const params = useParams<{ projectId: string }>()
+   193→  const projectId = params.projectId
+   194→
+   195→  const [findings, setFindings] = useState<FindingsResponse | null>(null)
+   196→  const [project, setProject] = useState<ProjectBrief | null>(null)
+   197→  const [loading, setLoading] = useState(true)
+   198→  const [error, setError] = useState<string | null>(null)
+   199→
+   200→  // Filters
+   201→  const [selectedSeverities, setSelectedSeverities] = useState<string[]>([])
+   202→  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+   203→  const [category, setCategory] = useState('')
+   204→  const [searchText, setSearchText] = useState('')
+   205→  const [searchInput, setSearchInput] = useState('')
+   206→
+   207→  // Sort
+   208→  const [sortField, setSortField] = useState<SortField>('lastSeenAt')
+   209→  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+   210→
+   211→  // Pagination
+   212→  const [cursor, setCursor] = useState<string | undefined>(undefined)
+   213→  const [prevCursors, setPrevCursors] = useState<string[]>([])
+   214→
+   215→  // Available categories derived from loaded findings
+   216→  const [availableCategories, setAvailableCategories] = useState<string[]>([])
+   217→
+   218→  // ─── Data Fetching ────────────────────────────────────────
+   219→
+   220→  const buildQueryString = useCallback(() => {
+   221→    const sp = new URLSearchParams()
+   222→    sp.set('limit', PAGE_SIZE.toString())
+   223→    if (sortField) sp.set('sort', sortField)
+   224→    if (sortOrder) sp.set('order', sortOrder)
+   225→    if (cursor) sp.set('cursor', cursor)
+   226→    if (selectedSeverities.length > 0) sp.set('severity', selectedSeverities.join(','))
+   227→    if (selectedStatuses.length > 0) sp.set('status', selectedStatuses.join(','))
+   228→    if (category) sp.set('category', category)
+   229→    if (searchText) sp.set('search', searchText)
+   230→    return sp.toString()
+   231→  }, [sortField, sortOrder, cursor, selectedSeverities, selectedStatuses, category, searchText])
+   232→
+   233→  const loadFindings = useCallback(async () => {
+   234→    setLoading(true)
+   235→    setError(null)
+   236→    try {
+   237→      const qs = buildQueryString()
+   238→      const res = await fetch(`/api/v1/projects/${projectId}/findings?${qs}`)
+   239→      if (!res.ok) {
+   240→        const body = await res.json().catch(() => ({}))
+   241→        setError(body.detail || `Failed to load findings (${res.status})`)
+   242→        return
+   243→      }
+   244→      const data = (await res.json()) as FindingsResponse
+   245→      setFindings(data)
+   246→
+   247→      // Derive unique categories
+   248→      const cats = new Set<string>()
+   249→      data.items.forEach((f) => cats.add(f.category))
+   250→      setAvailableCategories((prev) => {
+   251→        const merged = new Set([...prev, ...cats])
+   252→        return Array.from(merged).sort()
+   253→      })
+   254→    } catch (err) {
+   255→      setError(err instanceof Error ? err.message : 'Failed to load')
+   256→    } finally {
+   257→      setLoading(false)
+   258→    }
+   259→  }, [projectId, buildQueryString])
+   260→
+   261→  const loadProject = useCallback(async () => {
+   262→    try {
+   263→      const res = await fetch(`/api/v1/projects/${projectId}`)
+   264→      if (res.ok) {
+   265→        setProject(await res.json())
+   266→      }
+   267→    } catch {
+   268→      // Non-critical; breadcrumb can still work without it
+   269→    }
+   270→  }, [projectId])
+   271→
+   272→  useEffect(() => {
+   273→    void loadProject()
+   274→  }, [loadProject])
+   275→
+   276→  useEffect(() => {
+   277→    void loadFindings()
+   278→  }, [loadFindings])
+   279→
+   280→  // Reset pagination when filters/sort change
+   281→  useEffect(() => {
+   282→    setCursor(undefined)
+   283→    setPrevCursors([])
+   284→  }, [selectedSeverities, selectedStatuses, category, searchText, sortField, sortOrder])
+   285→
+   286→  // ─── Handlers ──────────────────────────────────────────────
+   287→
+   288→  const handleSearch = () => {
+   289→    setSearchText(searchInput)
+   290→  }
+   291→
+   292→  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+   293→    if (e.key === 'Enter') {
+   294→      handleSearch()
+   295→    }
+   296→  }
+   297→
+   298→  const toggleSeverity = (sev: string) => {
+   299→    setSelectedSeverities((prev) =>
+   300→      prev.includes(sev) ? prev.filter((s) => s !== sev) : [...prev, sev],
+   301→    )
+   302→  }
+   303→
+   304→  const toggleStatus = (status: string) => {
+   305→    setSelectedStatuses((prev) =>
+   306→      prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status],
+   307→    )
+   308→  }
+   309→
+   310→  const toggleSortOrder = () => {
+   311→    setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+   312→  }
+   313→
+   314→  const goNext = () => {
+   315→    if (findings?.nextCursor) {
+   316→      setPrevCursors((prev) => [...prev, cursor ?? ''])
+   317→      setCursor(findings.nextCursor)
+   318→    }
+   319→  }
+   320→
+   321→  const goPrev = () => {
+   322→    if (prevCursors.length > 0) {
+   323→      const newPrev = [...prevCursors]
+   324→      const prevCursor = newPrev.pop()!
+   325→      setPrevCursors(newPrev)
+   326→      setCursor(prevCursor || undefined)
+   327→    }
+   328→  }
+   329→
+   330→  const clearFilters = () => {
+   331→    setSelectedSeverities([])
+   332→    setSelectedStatuses([])
+   333→    setCategory('')
+   334→    setSearchText('')
+   335→    setSearchInput('')
+   336→  }
+   337→
+   338→  const hasActiveFilters =
+   339→    selectedSeverities.length > 0 ||
+   340→    selectedStatuses.length > 0 ||
+   341→    category !== '' ||
+   342→    searchText !== ''
+   343→
+   344→  const activeFilterCount =
+   345→    selectedSeverities.length + selectedStatuses.length + (category ? 1 : 0) + (searchText ? 1 : 0)
+   346→
+   347→  // ─── Loading Skeleton ───────────────────────────────────────
+   348→
+   349→  if (loading && !findings) {
+   350→    return (
+   351→      <div className="min-h-screen flex flex-col bg-background">
+   352→        <PageHeader projectName={project?.name} />
+   353→        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   354→          <div className="animate-pulse space-y-6">
+   355→            <Skeleton className="h-4 w-64" />
+   356→            <Skeleton className="h-10 w-full rounded-lg" />
+   357→            <Skeleton className="h-96 w-full rounded-lg" />
+   358→          </div>
+   359→        </main>
+   360→      </div>
+   361→    )
+   362→  }
+   363→
+   364→  // ─── Error State ───────────────────────────────────────────
+   365→
+   366→  if (error && !findings) {
+   367→    return (
+   368→      <div className="min-h-screen flex flex-col bg-background">
+   369→        <PageHeader projectName={project?.name} />
+   370→        <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   371→          <Card>
+   372→            <CardHeader>
+   373→              <CardTitle>Failed to load findings</CardTitle>
+   374→              <CardDescription>{error}</CardDescription>
+   375→            </CardHeader>
+   376→            <CardContent>
+   377→              <Button onClick={() => void loadFindings()} variant="outline">
+   378→                Retry
+   379→              </Button>
+   380→            </CardContent>
+   381→          </Card>
+   382→        </main>
+   383→      </div>
+   384→    )
+   385→  }
+   386→
+   387→  // ─── Main Render ────────────────────────────────────────────
+   388→
+   389→  const canGoPrev = prevCursors.length > 0
+   390→  const canGoNext = !!findings?.nextCursor
+   391→  const totalItems = findings?.totalApprox ?? 0
+   392→
+   393→  return (
+   394→    <div className="min-h-screen flex flex-col bg-background">
+   395→      <PageHeader projectName={project?.name} />
+   396→
+   397→      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+   398→        {/* Breadcrumb */}
+   399→        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
+   400→          <Link href="/app" className="hover:text-foreground transition-colors">
+   401→            Dashboard
+   402→          </Link>
+   403→          <ChevronRight className="h-3.5 w-3.5" />
+   404→          {project && (
+   405→            <>
+   406→              <Link href={`/app/projects/${projectId}`} className="hover:text-foreground transition-colors">
+   407→                {project.name}
+   408→              </Link>
+   409→              <ChevronRight className="h-3.5 w-3.5" />
+   410→            </>
+   411→          )}
+   412→          <span className="text-foreground font-medium">Findings</span>
+   413→        </div>
+   414→
+   415→        {/* Page Title */}
+   416→        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+   417→          <div className="flex items-center gap-3">
+   418→            <Button variant="ghost" size="icon" asChild>
+   419→              <Link href={`/app/projects/${projectId}`}>
+   420→                <ArrowLeft className="h-4 w-4" />
+   421→              </Link>
+   422→            </Button>
+   423→            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Findings</h1>
+   424→            <Badge variant="secondary" className="text-xs">
+   425→              {totalItems} {totalItems === 1 ? 'finding' : 'findings'}
+   426→            </Badge>
+   427→          </div>
+   428→        </div>
+   429→
+   430→        {/* Filters Bar */}
+   431→        <Card className="mb-6">
+   432→          <CardContent className="p-4">
+   433→            <div className="flex flex-col lg:flex-row gap-4">
+   434→              {/* Search Input */}
+   435→              <div className="relative flex-1 max-w-sm">
+   436→                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   437→                <Input
+   438→                  placeholder="Search findings..."
+   439→                  value={searchInput}
+   440→                  onChange={(e) => setSearchInput(e.target.value)}
+   441→                  onKeyDown={handleSearchKeyDown}
+   442→                  className="pl-9 pr-8"
+   443→                />
+   444→                {searchInput && (
+   445→                  <button
+   446→                    onClick={() => {
+   447→                      setSearchInput('')
+   448→                      setSearchText('')
+   449→                    }}
+   450→                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+   451→                  >
+   452→                    <X className="h-3.5 w-3.5" />
+   453→                  </button>
+   454→                )}
+   455→              </div>
+   456→
+   457→              {/* Severity Filter */}
+   458→              <DropdownMenu>
+   459→                <DropdownMenuTrigger asChild>
+   460→                  <Button variant="outline" size="sm" className="shrink-0">
+   461→                    <SlidersHorizontal className="h-4 w-4 mr-1.5" />
+   462→                    Severity
+   463→                    {selectedSeverities.length > 0 && (
+   464→                      <Badge variant="secondary" className="ml-1.5 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center">
+   465→                        {selectedSeverities.length}
+   466→                      </Badge>
+   467→                    )}
+   468→                  </Button>
+   469→                </DropdownMenuTrigger>
+   470→                <DropdownMenuContent align="start" className="w-48">
+   471→                  <DropdownMenuLabel>Filter by Severity</DropdownMenuLabel>
+   472→                  <DropdownMenuSeparator />
+   473→                  {SEVERITIES.map((sev) => (
+   474→                    <DropdownMenuItem
+   475→                      key={sev}
+   476→                      onClick={() => toggleSeverity(sev)}
+   477→                      className="flex items-center justify-between"
+   478→                    >
+   479→                      <div className="flex items-center gap-2">
+   480→                        <div className={`w-2.5 h-2.5 rounded-full ${sevDotColor(sev)}`} />
+   481→                        {sev}
+   482→                      </div>
+   483→                      {selectedSeverities.includes(sev) && (
+   484→                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+   485→                      )}
+   486→                    </DropdownMenuItem>
+   487→                  ))}
+   488→                </DropdownMenuContent>
+   489→              </DropdownMenu>
+   490→
+   491→              {/* Status Filter */}
+   492→              <DropdownMenu>
+   493→                <DropdownMenuTrigger asChild>
+   494→                  <Button variant="outline" size="sm" className="shrink-0">
+   495→                    Status
+   496→                    {selectedStatuses.length > 0 && (
+   497→                      <Badge variant="secondary" className="ml-1.5 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center">
+   498→                        {selectedStatuses.length}
+   499→                      </Badge>
+   500→                    )}
+   501→                  </Button>
+   502→                </DropdownMenuTrigger>
+   503→                <DropdownMenuContent align="start" className="w-52">
+   504→                  <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
+   505→                  <DropdownMenuSeparator />
+   506→                  {STATUSES.map((status) => (
+   507→                    <DropdownMenuItem
+   508→                      key={status}
+   509→                      onClick={() => toggleStatus(status)}
+   510→                      className="flex items-center justify-between"
+   511→                    >
+   512→                      <span>{formatStatus(status)}</span>
+   513→                      {selectedStatuses.includes(status) && (
+   514→                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+   515→                      )}
+   516→                    </DropdownMenuItem>
+   517→                  ))}
+   518→                </DropdownMenuContent>
+   519→              </DropdownMenu>
+   520→
+   521→              {/* Category Filter */}
+   522→              <Select value={category} onValueChange={(v) => setCategory(v === '__all__' ? '' : v)}>
+   523→                <SelectTrigger size="sm" className="w-[160px] shrink-0">
+   524→                  <SelectValue placeholder="Category" />
+   525→                </SelectTrigger>
+   526→                <SelectContent>
+   527→                  <SelectItem value="__all__">All Categories</SelectItem>
+   528→                  {availableCategories.map((cat) => (
+   529→                    <SelectItem key={cat} value={cat}>
+   530→                      {cat.replace(/_/g, ' ')}
+   531→                    </SelectItem>
+   532→                  ))}
+   533→                </SelectContent>
+   534→              </Select>
+   535→
+   536→              {/* Sort */}
+   537→              <div className="flex items-center gap-1">
+   538→                <Select
+   539→                  value={sortField}
+   540→                  onValueChange={(v) => setSortField(v as SortField)}
+   541→                >
+   542→                  <SelectTrigger size="sm" className="w-[130px] shrink-0">
+   543→                    <SelectValue />
+   544→                  </SelectTrigger>
+   545→                  <SelectContent>
+   546→                    {SORT_OPTIONS.map((opt) => (
+   547→                      <SelectItem key={opt.value} value={opt.value}>
+   548→                        {opt.label}
+   549→                      </SelectItem>
+   550→                    ))}
+   551→                  </SelectContent>
+   552→                </Select>
+   553→                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={toggleSortOrder}>
+   554→                  {sortOrder === 'desc' ? (
+   555→                    <ChevronDown className="h-4 w-4" />
+   556→                  ) : (
+   557→                    <ChevronUp className="h-4 w-4" />
+   558→                  )}
+   559→                </Button>
+   560→              </div>
+   561→
+   562→              {/* Clear Filters */}
+   563→              {hasActiveFilters && (
+   564→                <Button
+   565→                  variant="ghost"
+   566→                  size="sm"
+   567→                  onClick={clearFilters}
+   568→                  className="shrink-0 text-muted-foreground"
+   569→                >
+   570→                  <X className="h-3.5 w-3.5 mr-1" />
+   571→                  Clear ({activeFilterCount})
+   572→                </Button>
+   573→              )}
+   574→            </div>
+   575→
+   576→            {/* Active Filter Badges */}
+   577→            {hasActiveFilters && (
+   578→              <div className="flex flex-wrap gap-1.5 mt-3">
+   579→                {selectedSeverities.map((sev) => (
+   580→                  <Badge
+   581→                    key={sev}
+   582→                    variant="outline"
+   583→                    className={`text-xs cursor-pointer hover:opacity-70 ${severityColor(sev)}`}
+   584→                    onClick={() => toggleSeverity(sev)}
+   585→                  >
+   586→                    {sev}
+   587→                    <X className="h-2.5 w-2.5 ml-1" />
+   588→                  </Badge>
+   589→                ))}
+   590→                {selectedStatuses.map((status) => (
+   591→                  <Badge
+   592→                    key={status}
+   593→                    variant="outline"
+   594→                    className={`text-xs cursor-pointer hover:opacity-70 ${statusColor(status)}`}
+   595→                    onClick={() => toggleStatus(status)}
+   596→                  >
+   597→                    {formatStatus(status)}
+   598→                    <X className="h-2.5 w-2.5 ml-1" />
+   599→                  </Badge>
+   600→                ))}
+   601→                {category && (
+   602→                  <Badge
+   603→                    variant="outline"
+   604→                    className="text-xs cursor-pointer hover:opacity-70"
+   605→                    onClick={() => setCategory('')}
+   606→                  >
+   607→                    {category.replace(/_/g, ' ')}
+   608→                    <X className="h-2.5 w-2.5 ml-1" />
+   609→                  </Badge>
+   610→                )}
+   611→                {searchText && (
+   612→                  <Badge
+   613→                    variant="outline"
+   614→                    className="text-xs cursor-pointer hover:opacity-70"
+   615→                    onClick={() => {
+   616→                      setSearchText('')
+   617→                      setSearchInput('')
+   618→                    }}
+   619→                  >
+   620→                    &ldquo;{searchText}&rdquo;
+   621→                    <X className="h-2.5 w-2.5 ml-1" />
+   622→                  </Badge>
+   623→                )}
+   624→              </div>
+   625→            )}
+   626→          </CardContent>
+   627→        </Card>
+   628→
+   629→        {/* Findings Table */}
+   630→        <Card>
+   631→          {loading ? (
+   632→            <CardContent className="p-6">
+   633→              <div className="flex items-center justify-center gap-2 text-muted-foreground text-sm">
+   634→                <Loader2 className="h-4 w-4 animate-spin" />
+   635→                Loading findings...
+   636→              </div>
+   637→            </CardContent>
+   638→          ) : !findings || findings.items.length === 0 ? (
+   639→            <CardContent className="py-16">
+   640→              <div className="flex flex-col items-center text-center">
+   641→                <FileX className="h-12 w-12 text-muted-foreground/40 mb-4" />
+   642→                <h3 className="text-lg font-medium mb-1">
+   643→                  {hasActiveFilters ? 'No matching findings' : 'No findings yet'}
+   644→                </h3>
+   645→                <p className="text-sm text-muted-foreground mb-4">
+   646→                  {hasActiveFilters
+   647→                    ? 'Try adjusting your filters or search terms.'
+   648→                    : 'Findings will appear here once a scan run has completed analysis.'}
+   649→                </p>
+   650→                {hasActiveFilters && (
+   651→                  <Button variant="outline" size="sm" onClick={clearFilters}>
+   652→                    Clear All Filters
+   653→                  </Button>
+   654→                )}
+   655→              </div>
+   656→            </CardContent>
+   657→          ) : (
+   658→            <>
+   659→              <Table>
+   660→                <TableHeader>
+   661→                  <TableRow>
+   662→                    <TableHead className="w-[100px]">Severity</TableHead>
+   663→                    <TableHead className="min-w-[200px]">Title</TableHead>
+   664→                    <TableHead className="hidden md:table-cell w-[140px]">Category</TableHead>
+   665→                    <TableHead className="hidden sm:table-cell w-[130px]">Status</TableHead>
+   666→                    <TableHead className="hidden lg:table-cell">URL</TableHead>
+   667→                    <TableHead className="hidden lg:table-cell w-[90px]">First Seen</TableHead>
+   668→                    <TableHead className="w-[90px]">Last Seen</TableHead>
+   669→                  </TableRow>
+   670→                </TableHeader>
+   671→                <TableBody>
+   672→                  {findings.items.map((finding) => (
+   673→                    <TableRow key={finding.id} className="cursor-pointer">
+   674→                      <TableCell>
+   675→                        <Badge variant="outline" className={`text-xs font-medium ${severityColor(finding.severity)}`}>
+   676→                          {finding.severity}
+   677→                        </Badge>
+   678→                      </TableCell>
+   679→                      <TableCell>
+   680→                        <div className="min-w-0">
+   681→                          <p className="text-sm font-medium truncate max-w-xs lg:max-w-md">
+   682→                            {finding.title}
+   683→                          </p>
+   684→                          <div className="flex items-center gap-2 mt-0.5 md:hidden">
+   685→                            <Badge variant="outline" className={`text-[10px] ${severityColor(finding.severity)}`}>
+   686→                              {finding.severity}
+   687→                            </Badge>
+   688→                            <span className="text-xs text-muted-foreground">
+   689→                              {finding.category.replace(/_/g, ' ')}
+   690→                            </span>
+   691→                          </div>
+   692→                        </div>
+   693→                      </TableCell>
+   694→                      <TableCell className="hidden md:table-cell">
+   695→                        <span className="text-sm text-muted-foreground">
+   696→                          {finding.category.replace(/_/g, ' ')}
+   697→                        </span>
+   698→                      </TableCell>
+   699→                      <TableCell className="hidden sm:table-cell">
+   700→                        <Badge variant="outline" className={`text-xs ${statusColor(finding.status)}`}>
+   701→                          {formatStatus(finding.status)}
+   702→                        </Badge>
+   703→                      </TableCell>
+   704→                      <TableCell className="hidden lg:table-cell">
+   705→                        <span className="text-xs font-mono text-muted-foreground block truncate max-w-[250px]" title={finding.affectedUrl}>
+   706→                          {truncateUrl(finding.affectedUrl)}
+   707→                        </span>
+   708→                      </TableCell>
+   709→                      <TableCell className="hidden lg:table-cell">
+   710→                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+   711→                          {relativeTime(finding.firstSeenAt)}
+   712→                        </span>
+   713→                      </TableCell>
+   714→                      <TableCell>
+   715→                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+   716→                          {relativeTime(finding.lastSeenAt)}
+   717→                        </span>
+   718→                      </TableCell>
+   719→                    </TableRow>
+   720→                  ))}
+   721→                </TableBody>
+   722→              </Table>
+   723→
+   724→              {/* Pagination */}
+   725→              <div className="flex items-center justify-between px-4 py-3 border-t">
+   726→                <p className="text-sm text-muted-foreground">
+   727→                  Showing {findings.items.length} of {totalItems} findings
+   728→                </p>
+   729→                <div className="flex items-center gap-2">
+   730→                  <Button
+   731→                    variant="outline"
+   732→                    size="sm"
+   733→                    disabled={!canGoPrev}
+   734→                    onClick={goPrev}
+   735→                  >
+   736→                    <ChevronLeft className="h-4 w-4 mr-1" />
+   737→                    Previous
+   738→                  </Button>
+   739→                  <Button
+   740→                    variant="outline"
+   741→                    size="sm"
+   742→                    disabled={!canGoNext}
+   743→                    onClick={goNext}
+   744→                  >
+   745→                    Next
+   746→                    <ChevronRight className="h-4 w-4 ml-1" />
+   747→                  </Button>
+   748→                </div>
+   749→              </div>
+   750→            </>
+   751→          )}
+   752→        </Card>
+   753→      </main>
+   754→
+   755→      {/* Footer */}
+   756→      <footer className="border-t mt-auto">
+   757→        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 text-sm text-muted-foreground">
+   758→          &copy; {new Date().getFullYear()} ProofPilot. Automated QA, not penetration testing.
+   759→        </div>
+   760→      </footer>
+   761→    </div>
+   762→  )
+   763→}
+   764→
+   765→// ─── Sub-Components ─────────────────────────────────────────────
+   766→
+   767→function PageHeader({ projectName }: { projectName?: string }) {
+   768→  return (
+   769→    <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-sm">
+   770→      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+   771→        <div className="flex h-14 items-center justify-between">
+   772→          <div className="flex items-center gap-6">
+   773→            <Link href="/" className="flex items-center gap-2 font-semibold">
+   774→              <ShieldCheck className="h-5 w-5 text-primary" />
+   775→              <span>ProofPilot</span>
+   776→            </Link>
+   777→            <nav className="hidden sm:flex items-center gap-1">
+   778→              <Link
+   779→                href="/app"
+   780→                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-muted-foreground hover:bg-muted text-sm"
+   781→              >
+   782→                <LayoutDashboard className="h-3.5 w-3.5" />
+   783→                Dashboard
+   784→              </Link>
+   785→              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-sm font-medium">
+   786→                <Bug className="h-3.5 w-3.5" />
+   787→                Findings
+   788→              </div>
+   789→            </nav>
+   790→          </div>
+   791→        </div>
+   792→      </div>
+   793→    </header>
+   794→  )
+   795→}
+   796→
+   797→function sevDotColor(sev: string): string {
+   798→  switch (sev) {
+   799→    case 'BLOCKER':
+   800→      return 'bg-red-500'
+   801→    case 'CRITICAL':
+   802→      return 'bg-orange-500'
+   803→    case 'MAJOR':
+   804→      return 'bg-amber-500'
+   805→    case 'MINOR':
+   806→      return 'bg-lime-500'
+   807→    case 'INFO':
+   808→      return 'bg-gray-400'
+   809→    default:
+   810→      return 'bg-gray-400'
+   811→  }
+   812→}
+   813→
