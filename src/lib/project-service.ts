@@ -41,15 +41,19 @@ export async function createProject(
     throw new ValidationError('Production URL must start with http:// or https://')
   }
 
-  // Check plan limit
+  // Check plan limit via subscription
   const workspace = await db.workspace.findUniqueOrThrow({
     where: { id: workspaceId },
+  })
+  const subscription = await db.subscription.findFirst({
+    where: { workspaceId, status: { in: ['TRIALING', 'ACTIVE', 'GRACE_PERIOD'] } },
     include: { plan: true },
   })
+  const plan = subscription?.plan
   const projectCount = await db.project.count({ where: { workspaceId, status: 'ACTIVE' } })
-  if (workspace.plan && projectCount >= workspace.plan.maxProjects) {
+  if (plan && projectCount >= plan.maxProjects) {
     throw new AppError(
-      `Plan limit reached: ${workspace.plan.maxProjects} projects max on ${workspace.plan.code}`,
+      `Plan limit reached: ${plan.maxProjects} projects max on ${plan.code}`,
       402,
       'plan_limit_exceeded',
       'https://proofpilot.app/problems/plan-limit',

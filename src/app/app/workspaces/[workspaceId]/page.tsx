@@ -5,7 +5,9 @@ import { listProjects } from '@/lib/project-service'
 import { db } from '@/lib/db'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { CreateProjectButton } from '@/components/app/create-project-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,19 +53,20 @@ export default async function WorkspaceProjectsPage({
             <h1 className="text-2xl font-bold">Projects</h1>
             <p className="text-muted-foreground text-sm">Manage QA projects for this workspace.</p>
           </div>
-          <Button>Create project</Button>
+          <CreateProjectButton workspaceId={workspaceId} />
         </div>
 
         {projects.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No projects yet</CardTitle>
-              <CardDescription>Create your first project to start scanning.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button>Create project</Button>
-            </CardContent>
-          </Card>
+          <div className="border rounded-lg p-8 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Plus className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium mb-1">No projects yet</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Create your first project to start scanning.
+            </p>
+            <CreateProjectButton workspaceId={workspaceId} />
+          </div>
         ) : (
           <div className="grid gap-4">
             {projects.map((p) => (
