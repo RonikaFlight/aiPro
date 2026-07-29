@@ -1442,3 +1442,20 @@ Stage Summary:
 - `src/components/app/app-shell.tsx`: Added CSRF token fetch to sign-out handler
 - Both changes verified end-to-end via agent-browser automation
 - All navigation links, workspace creation, sign-out now work correctly
+---
+Task ID: 2-fix-hydration
+Agent: main (Z.ai Code)
+Task: Fix React hydration mismatch error in Navbar (aria-controls IDs differing between server and client)
+
+Work Log:
+- Identified root cause: Radix UI Sheet/Dialog component generates auto-generated `aria-controls` IDs that differ between server and client renders
+- Previous fix used `useState(() => { setMounted(true) })` which is incorrect — `useState` initializer runs during SSR too, not just on client
+- Replaced with `useSyncExternalStore` which is the React-recommended pattern for detecting client-side mount without hydration mismatch
+- `useSyncExternalStore(emptySubscribe, () => true, () => false)` returns `false` during SSR and `true` on client, with React reconciling the difference safely
+- This prevents the Sheet component from rendering during SSR, eliminating the `aria-controls` mismatch
+- Verified: no console errors, no hydration warnings, mobile hamburger menu opens correctly
+
+Stage Summary:
+- `src/components/landing/Navbar.tsx`: Replaced `useState` + `useEffect` mount detection with `useSyncExternalStore`
+- Lint passes cleanly
+- Browser-verified: zero hydration errors on homepage (desktop + mobile viewports)

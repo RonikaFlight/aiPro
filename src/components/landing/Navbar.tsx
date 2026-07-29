@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useSyncExternalStore } from "react"
 import Link from "next/link"
 import { ShieldCheck, Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/sheet"
 import { ThemeToggle } from "./ThemeToggle"
 
+// Detect client mount without hydration mismatch (useSyncExternalStore returns
+// different values for server vs client but React reconciles them safely)
+const emptySubscribe = () => () => {}
+
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Pricing", href: "#pricing" },
@@ -22,10 +26,11 @@ const NAV_LINKS = [
 
 export function Navbar() {
   // Suppress hydration mismatch for Sheet by mounting on client only
-  const [mounted, setMounted] = useState(false)
-  useState(() => {
-    setMounted(true)
-  })
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  )
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/80 backdrop-blur-sm">
