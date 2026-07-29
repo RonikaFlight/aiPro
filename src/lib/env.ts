@@ -181,4 +181,24 @@ function validateProductionSafety(env: Env): void {
   }
 }
 
-export const env = loadEnv()
+// Lazy singleton — avoids Zod validation during Turbopack compilation.
+// `loadEnv()` is called on first property access, not at import time.
+const _envProxy = new Proxy({} as Env, {
+  get(_target, prop) {
+    if (!cached) cached = loadEnv()
+    return (cached as Record<string | symbol, unknown>)[prop]
+  },
+  has(_target, prop) {
+    if (!cached) cached = loadEnv()
+    return prop in (cached as object)
+  },
+  ownKeys() {
+    if (!cached) cached = loadEnv()
+    return Reflect.ownKeys(cached)
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    if (!cached) cached = loadEnv()
+    return Reflect.getOwnPropertyDescriptor(cached, prop)
+  },
+})
+export const env: Env = _envProxy
