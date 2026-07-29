@@ -90,8 +90,7 @@ export default async function AppDashboard() {
         status: true,
         createdAt: true,
         score: true,
-        project: { select: { name: true } },
-        workspace: { select: { name: true } },
+        project: { select: { name: true, workspace: { select: { name: true } } } },
       },
     }),
   ])
@@ -318,7 +317,7 @@ export default async function AppDashboard() {
                           {run.project.name}
                         </div>
                         <div className="text-xs text-muted-foreground truncate">
-                          {run.workspace.name}
+                          {run.project.workspace?.name}
                         </div>
                       </div>
                     </div>
