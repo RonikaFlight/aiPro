@@ -400,7 +400,7 @@ export default function ProjectDashboardPage() {
           </Card>
 
           {/* Delivery Readiness */}
-          <Card className={`lg:col-span-1 border ${readinessBg(score.readiness)}`}>
+          <Card className={`lg:col-span-1 border ${readinessBg(score.readiness ?? '')}`}>
             <CardHeader className="pb-3">
               <CardDescription className="flex items-center gap-1.5">
                 <Target className="h-3.5 w-3.5" />
@@ -409,9 +409,9 @@ export default function ProjectDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold mb-1">
-                {score.readiness.replace(/_/g, ' ')}
+                {(score.readiness ?? '—').replace(/_/g, ' ')}
               </div>
-              <p className={`text-sm ${readinessColor(score.readiness)}`}>
+              <p className={`text-sm ${readinessColor(score.readiness ?? '')}`}>
                 {score.readiness === 'READY'
                   ? 'No blockers or criticals. Ready for delivery.'
                   : score.readiness === 'NEEDS_WORK'

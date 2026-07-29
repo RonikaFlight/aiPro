@@ -203,7 +203,7 @@ export async function GET(
         totalJourneys: project._count.journeys,
         totalEnvironments: project._count.environments,
       },
-      score: scoreData,
+      score: scoreData.current,
       latestRun,
       trend: trendRuns.map((r) => ({
         id: r.id,
