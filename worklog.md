@@ -1424,3 +1424,21 @@ Stage Summary:
 - 26 Playwright E2E/accessibility tests, all passing
 - 0 lint errors
 - Key artifacts: 10 test files, 2 CI/CD workflows, Dockerfile, .dockerignore, README.md, playwright.config.ts, demo-target
+---
+Task ID: 1-fix-origin
+Agent: main (Z.ai Code)
+Task: Fix "Invalid Origin" CSRF error preventing workspace creation and fix sign-out button
+
+Work Log:
+- Identified root cause: CSRF protection in `src/lib/csrf.ts` only allowed `env.APP_URL` (http://localhost:3000) and `http://localhost:3000` as valid origins
+- When the app is accessed through the Caddy reverse proxy (preview URL like `https://preview-chat-...space-z.ai`), the browser sends that origin, which was rejected
+- Fixed `assertCsrf()` to also accept the origin derived from the request's `Host` header (via `x-forwarded-proto` or default `https`)
+- Fixed `handleSignOut()` in `app-shell.tsx` which was sending POST to `/api/v1/auth/logout` without a CSRF token — added CSRF token fetch before the logout request
+- Verified all other POST endpoints already include CSRF tokens correctly
+- Browser-tested the complete flow: register → verify email → login → create workspace → navigate team/audit pages → sign out — all working
+
+Stage Summary:
+- `src/lib/csrf.ts`: Added Host-header-derived origin to allowed origins whitelist
+- `src/components/app/app-shell.tsx`: Added CSRF token fetch to sign-out handler
+- Both changes verified end-to-end via agent-browser automation
+- All navigation links, workspace creation, sign-out now work correctly

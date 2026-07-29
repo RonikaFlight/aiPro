@@ -66,6 +66,14 @@ export function assertCsrf(request: Request): void {
     allowedOrigins.push('http://localhost:3000')
   }
 
+  // Also allow the origin derived from the request's own Host header
+  // so requests through reverse proxies (Caddy, etc.) are accepted
+  const hostHeader = request.headers.get('host')
+  if (hostHeader) {
+    const protocol = request.headers.get('x-forwarded-proto') || 'https'
+    allowedOrigins.push(`${protocol}://${hostHeader}`)
+  }
+
   if (origin) {
     if (!allowedOrigins.includes(origin)) {
       throw new ForbiddenError(`Invalid Origin: ${origin}`)

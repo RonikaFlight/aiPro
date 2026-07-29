@@ -24,7 +24,16 @@ export function AppHeader({ email, userName, hasWorkspaces }: AppHeaderProps) {
   const router = useRouter()
 
   const handleSignOut = async () => {
-    await fetch("/api/v1/auth/logout", { method: "POST" })
+    try {
+      const csrfRes = await fetch("/api/v1/csrf")
+      const csrfData = await csrfRes.json()
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+        headers: { "x-csrf-token": csrfData.csrfToken },
+      })
+    } catch {
+      // ignore errors and redirect anyway
+    }
     window.location.href = "/login"
   }
 
