@@ -1486,3 +1486,31 @@ Stage Summary:
 - `package-lock.json` generated
 - Worker mini-service migrated from Bun.serve to node:http
 - Dev server verified working: `npm run dev` → 200 OK
+---
+Task ID: 4-update-readme
+Agent: main (Z.ai Code)
+Task: Update README.md with comprehensive how-to-run instructions, replacing all bun references with npm
+
+Work Log:
+- Rewrote entire README.md from scratch
+- Updated badge: removed Bun badge, added npm badge
+- Added detailed "How to Run the Project" section with 6 numbered steps:
+  1. Install Dependencies (`npm install`)
+  2. Configure Environment Variables (with example .env)
+  3. Database Setup (`npm run db:push`, `npm run db:generate`, `npm run seed`)
+  4. Start the Development Server (`npm run dev`)
+  5. (Optional) Start the Worker Mini-Service (`npm run worker`)
+  6. Using the Application (register → verify email → login → create workspace → create project → run scan)
+- Added "Quick Reference: All npm Scripts" table
+- Added "Development Workflow" section showing typical 3-terminal setup
+- Added "Gateway / Reverse Proxy" section explaining Caddy configuration
+- Updated Tech Stack table: removed Bun, added npm
+- Updated "Available Scripts" section with npm commands
+- Removed bun references from Docker, testing, and contributing sections
+- Added notes about npm postinstall script approvals for sharp, argon2, prisma
+
+Stage Summary:
+- README.md fully updated with npm-based workflow
+- All bun references eliminated
+- Comprehensive step-by-step running instructions added
+- Dev server verified working: npm run dev → 200 OK
