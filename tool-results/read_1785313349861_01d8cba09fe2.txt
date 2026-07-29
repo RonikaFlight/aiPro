@@ -1,0 +1,917 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, type FormEvent } from 'react'
+     4→import { toast } from 'sonner'
+     5→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     6→import { Button } from '@/components/ui/button'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Input } from '@/components/ui/input'
+     9→import { Label } from '@/components/ui/label'
+    10→import {
+    11→  Select,
+    12→  SelectContent,
+    13→  SelectItem,
+    14→  SelectTrigger,
+    15→  SelectValue,
+    16→} from '@/components/ui/select'
+    17→import {
+    18→  Table,
+    19→  TableBody,
+    20→  TableCell,
+    21→  TableHead,
+    22→  TableHeader,
+    23→  TableRow,
+    24→} from '@/components/ui/table'
+    25→import { Skeleton } from '@/components/ui/skeleton'
+    26→import {
+    27→  AlertDialog,
+    28→  AlertDialogAction,
+    29→  AlertDialogCancel,
+    30→  AlertDialogContent,
+    31→  AlertDialogDescription,
+    32→  AlertDialogFooter,
+    33→  AlertDialogHeader,
+    34→  AlertDialogTitle,
+    35→  AlertDialogTrigger,
+    36→} from '@/components/ui/alert-dialog'
+    37→import {
+    38→  Dialog,
+    39→  DialogContent,
+    40→  DialogDescription,
+    41→  DialogFooter,
+    42→  DialogHeader,
+    43→  DialogTitle,
+    44→  DialogTrigger,
+    45→} from '@/components/ui/dialog'
+    46→import {
+    47→  DropdownMenu,
+    48→  DropdownMenuContent,
+    49→  DropdownMenuItem,
+    50→  DropdownMenuSeparator,
+    51→  DropdownMenuSub,
+    52→  DropdownMenuSubContent,
+    53→  DropdownMenuSubTrigger,
+    54→  DropdownMenuTrigger,
+    55→} from '@/components/ui/dropdown-menu'
+    56→import {
+    57→  Plus,
+    58→  Search,
+    59→  MoreHorizontal,
+    60→  Eye,
+    61→  Shield,
+    62→  UserCog,
+    63→  Ban,
+    64→  CheckCircle2,
+    65→  Trash2,
+    66→  ChevronLeft,
+    67→  ChevronRight,
+    68→  RefreshCw,
+    69→  Users,
+    70→  Loader2,
+    71→  AlertCircle,
+    72→} from 'lucide-react'
+    73→
+    74→// ─── Types ───────────────────────────────────────────────────────────────────
+    75→
+    76→interface AdminUser {
+    77→  id: string
+    78→  email: string
+    79→  emailLower: string
+    80→  name: string | null
+    81→  status: string
+    82→  platformRole: string
+    83→  locale: string
+    84→  avatarUrl: string | null
+    85→  lastLoginAt: string | null
+    86→  failedLoginCount: number
+    87→  lockedUntil: string | null
+    88→  createdAt: string
+    89→  updatedAt: string
+    90→  _count: { sessions: number; workspaceMembers: number }
+    91→}
+    92→
+    93→interface UsersResponse {
+    94→  data: AdminUser[]
+    95→  nextCursor: string | null
+    96→  prevCursor: string | null
+    97→  total: number
+    98→}
+    99→
+   100→// ─── Helpers ─────────────────────────────────────────────────────────────────
+   101→
+   102→function getCsrfToken(): Promise<string> {
+   103→  return fetch('/api/v1/auth/csrf').then((r) => r.json()).then((d) => d.token)
+   104→}
+   105→
+   106→function statusColor(status: string) {
+   107→  switch (status) {
+   108→    case 'ACTIVE':
+   109→      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+   110→    case 'SUSPENDED':
+   111→      return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800'
+   112→    case 'DELETED':
+   113→      return 'bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+   114→    case 'PENDING_VERIFICATION':
+   115→      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+   116→    default:
+   117→      return 'bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+   118→  }
+   119→}
+   120→
+   121→function roleColor(role: string) {
+   122→  switch (role) {
+   123→    case 'PLATFORM_ADMIN':
+   124→      return 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-violet-200 dark:border-violet-800'
+   125→    case 'SUPPORT':
+   126→      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+   127→    case 'USER':
+   128→    default:
+   129→      return 'bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400 border-gray-200 dark:border-gray-700'
+   130→  }
+   131→}
+   132→
+   133→function formatRole(role: string) {
+   134→  switch (role) {
+   135→    case 'PLATFORM_ADMIN': return 'Admin'
+   136→    case 'SUPPORT': return 'Support'
+   137→    case 'USER': return 'User'
+   138→    default: return role
+   139→  }
+   140→}
+   141→
+   142→function formatStatus(status: string) {
+   143→  return status.replace(/_/g, ' ')
+   144→}
+   145→
+   146→function relativeTime(dateStr: string | null): string {
+   147→  if (!dateStr) return '\u2014'
+   148→  const date = new Date(dateStr)
+   149→  const now = new Date()
+   150→  const diffMs = now.getTime() - date.getTime()
+   151→  const diffSec = Math.floor(diffMs / 1000)
+   152→  const diffMin = Math.floor(diffSec / 60)
+   153→  const diffHr = Math.floor(diffMin / 60)
+   154→  const diffDay = Math.floor(diffHr / 24)
+   155→
+   156→  if (diffSec < 60) return 'just now'
+   157→  if (diffMin < 60) return `${diffMin}m ago`
+   158→  if (diffHr < 24) return `${diffHr}h ago`
+   159→  if (diffDay < 30) return `${diffDay}d ago`
+   160→  return date.toLocaleDateString()
+   161→}
+   162→
+   163→function formatDate(dateStr: string): string {
+   164→  return new Date(dateStr).toLocaleDateString(undefined, {
+   165→    year: 'numeric',
+   166→    month: 'short',
+   167→    day: 'numeric',
+   168→  })
+   169→}
+   170→
+   171→// ─── Component ───────────────────────────────────────────────────────────────
+   172→
+   173→export default function AdminUsersPage() {
+   174→  // ── State ──
+   175→  const [users, setUsers] = useState<AdminUser[]>([])
+   176→  const [total, setTotal] = useState(0)
+   177→  const [nextCursor, setNextCursor] = useState<string | null>(null)
+   178→  const [prevCursor, setPrevCursor] = useState<string | null>(null)
+   179→  const [loading, setLoading] = useState(true)
+   180→  const [error, setError] = useState<string | null>(null)
+   181→
+   182→  // Filters
+   183→  const [search, setSearch] = useState('')
+   184→  const [searchInput, setSearchInput] = useState('')
+   185→  const [statusFilter, setStatusFilter] = useState('ALL')
+   186→  const [roleFilter, setRoleFilter] = useState('ALL')
+   187→  const [cursor, setCursor] = useState<string | undefined>(undefined)
+   188→
+   189→  // Mutations
+   190→  const [mutating, setMutating] = useState<string | null>(null)
+   191→
+   192→  // Detail dialog
+   193→  const [detailOpen, setDetailOpen] = useState(false)
+   194→  const [detailUser, setDetailUser] = useState<AdminUser | null>(null)
+   195→  const [detailLoading, setDetailLoading] = useState(false)
+   196→
+   197→  // New user dialog
+   198→  const [newUserOpen, setNewUserOpen] = useState(false)
+   199→  const [newUserForm, setNewUserForm] = useState({
+   200→    name: '',
+   201→    email: '',
+   202→    password: '',
+   203→    platformRole: 'USER',
+   204→    status: 'ACTIVE',
+   205→  })
+   206→  const [newUserSubmitting, setNewUserSubmitting] = useState(false)
+   207→
+   208→  // ── Fetch users ──
+   209→  const fetchUsers = useCallback(async () => {
+   210→    setLoading(true)
+   211→    setError(null)
+   212→    try {
+   213→      const params = new URLSearchParams()
+   214→      if (search) params.set('search', search)
+   215→      if (statusFilter !== 'ALL') params.set('status', statusFilter)
+   216→      if (roleFilter !== 'ALL') params.set('platformRole', roleFilter)
+   217→      if (cursor) params.set('cursor', cursor)
+   218→      params.set('limit', '20')
+   219→
+   220→      const res = await fetch(`/api/v1/admin/users?${params.toString()}`)
+   221→      if (!res.ok) throw new Error(`Failed to fetch users (${res.status})`)
+   222→      const json: UsersResponse = await res.json()
+   223→      setUsers(json.data)
+   224→      setNextCursor(json.nextCursor)
+   225→      setPrevCursor(json.prevCursor)
+   226→      setTotal(json.total)
+   227→    } catch (err) {
+   228→      setError(err instanceof Error ? err.message : 'Unknown error')
+   229→    } finally {
+   230→      setLoading(false)
+   231→    }
+   232→  }, [search, statusFilter, roleFilter, cursor])
+   233→
+   234→  useEffect(() => {
+   235→    fetchUsers()
+   236→  }, [fetchUsers])
+   237→
+   238→  // Reset cursor when filters change
+   239→  useEffect(() => {
+   240→    setCursor(undefined)
+   241→  }, [search, statusFilter, roleFilter])
+   242→
+   243→  // ── Handlers ──
+   244→  const handleSearch = (e: FormEvent) => {
+   245→    e.preventDefault()
+   246→    setSearch(searchInput)
+   247→    setCursor(undefined)
+   248→  }
+   249→
+   250→  const handlePrev = () => {
+   251→    if (prevCursor) setCursor(prevCursor)
+   252→  }
+   253→
+   254→  const handleNext = () => {
+   255→    if (nextCursor) setCursor(nextCursor)
+   256→  }
+   257→
+   258→  const handleViewDetail = async (userId: string) => {
+   259→    setDetailLoading(true)
+   260→    setDetailOpen(true)
+   261→    try {
+   262→      const res = await fetch(`/api/v1/admin/users/${userId}`)
+   263→      if (!res.ok) throw new Error('Failed to fetch user')
+   264→      setDetailUser(await res.json())
+   265→    } catch {
+   266→      toast.error('Failed to load user details')
+   267→      setDetailOpen(false)
+   268→    } finally {
+   269→      setDetailLoading(false)
+   270→    }
+   271→  }
+   272→
+   273→  const handleChangeRole = async (userId: string, newRole: string) => {
+   274→    setMutating(userId)
+   275→    try {
+   276→      const csrf = await getCsrfToken()
+   277→      const res = await fetch(`/api/v1/admin/users/${userId}`, {
+   278→        method: 'PATCH',
+   279→        headers: {
+   280→          'X-CSRF-Token': csrf,
+   281→          'Content-Type': 'application/json',
+   282→        },
+   283→        body: JSON.stringify({ platformRole: newRole }),
+   284→      })
+   285→      if (!res.ok) throw new Error('Failed to update role')
+   286→      toast.success(`Role changed to ${formatRole(newRole)}`)
+   287→      fetchUsers()
+   288→    } catch {
+   289→      toast.error('Failed to change role')
+   290→    } finally {
+   291→      setMutating(null)
+   292→    }
+   293→  }
+   294→
+   295→  const handleToggleStatus = async (userId: string, currentStatus: string) => {
+   296→    const newStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'
+   297→    setMutating(userId)
+   298→    try {
+   299→      const csrf = await getCsrfToken()
+   300→      const res = await fetch(`/api/v1/admin/users/${userId}`, {
+   301→        method: 'PATCH',
+   302→        headers: {
+   303→          'X-CSRF-Token': csrf,
+   304→          'Content-Type': 'application/json',
+   305→        },
+   306→        body: JSON.stringify({ status: newStatus }),
+   307→      })
+   308→      if (!res.ok) throw new Error(`Failed to ${newStatus === 'SUSPENDED' ? 'suspend' : 'activate'} user`)
+   309→      toast.success(`User ${newStatus === 'SUSPENDED' ? 'suspended' : 'activated'}`)
+   310→      fetchUsers()
+   311→    } catch {
+   312→      toast.error(`Failed to ${newStatus === 'SUSPENDED' ? 'suspend' : 'activate'} user`)
+   313→    } finally {
+   314→      setMutating(null)
+   315→    }
+   316→  }
+   317→
+   318→  const handleDelete = async (userId: string) => {
+   319→    setMutating(userId)
+   320→    try {
+   321→      const csrf = await getCsrfToken()
+   322→      const res = await fetch(`/api/v1/admin/users/${userId}`, {
+   323→        method: 'PATCH',
+   324→        headers: {
+   325→          'X-CSRF-Token': csrf,
+   326→          'Content-Type': 'application/json',
+   327→        },
+   328→        body: JSON.stringify({ status: 'DELETED' }),
+   329→      })
+   330→      if (!res.ok) throw new Error('Failed to delete user')
+   331→      toast.success('User deleted')
+   332→      fetchUsers()
+   333→    } catch {
+   334→      toast.error('Failed to delete user')
+   335→    } finally {
+   336→      setMutating(null)
+   337→    }
+   338→  }
+   339→
+   340→  const handleCreateUser = async (e: FormEvent) => {
+   341→    e.preventDefault()
+   342→    setNewUserSubmitting(true)
+   343→    try {
+   344→      const csrf = await getCsrfToken()
+   345→      const res = await fetch('/api/v1/admin/users', {
+   346→        method: 'POST',
+   347→        headers: {
+   348→          'X-CSRF-Token': csrf,
+   349→          'Content-Type': 'application/json',
+   350→        },
+   351→        body: JSON.stringify(newUserForm),
+   352→      })
+   353→      if (!res.ok) {
+   354→        const err = await res.json().catch(() => ({}))
+   355→        throw new Error(err.error || err.message || `Failed to create user (${res.status})`)
+   356→      }
+   357→      toast.success('User created successfully')
+   358→      setNewUserOpen(false)
+   359→      setNewUserForm({ name: '', email: '', password: '', platformRole: 'USER', status: 'ACTIVE' })
+   360→      fetchUsers()
+   361→    } catch (err) {
+   362→      toast.error(err instanceof Error ? err.message : 'Failed to create user')
+   363→    } finally {
+   364→      setNewUserSubmitting(false)
+   365→    }
+   366→  }
+   367→
+   368→  // ── Pagination display ──
+   369→  const startIdx = total === 0 ? 0 : Math.max(1, (cursor ? (prevCursor ? users.length + 1 : total - users.length + 1) : 1))
+   370→  const endIdx = startIdx + users.length - 1
+   371→
+   372→  return (
+   373→    <div className="p-4 md:p-6 lg:p-8 space-y-6">
+   374→      {/* ── Header ── */}
+   375→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+   376→        <div>
+   377→          <h1 className="text-2xl font-bold tracking-tight">Users</h1>
+   378→          <p className="text-sm text-muted-foreground mt-1">
+   379→            Manage platform users, roles, and account statuses.
+   380→          </p>
+   381→        </div>
+   382→        <Dialog open={newUserOpen} onOpenChange={setNewUserOpen}>
+   383→          <DialogTrigger asChild>
+   384→            <Button className="gap-2">
+   385→              <Plus className="h-4 w-4" />
+   386→              New User
+   387→            </Button>
+   388→          </DialogTrigger>
+   389→          <DialogContent className="sm:max-w-md">
+   390→            <form onSubmit={handleCreateUser}>
+   391→              <DialogHeader>
+   392→                <DialogTitle>Create New User</DialogTitle>
+   393→                <DialogDescription>
+   394→                  Add a new user to the platform. They will receive an email to verify their account.
+   395→                </DialogDescription>
+   396→              </DialogHeader>
+   397→              <div className="grid gap-4 py-4">
+   398→                <div className="grid gap-2">
+   399→                  <Label htmlFor="new-name">Name</Label>
+   400→                  <Input
+   401→                    id="new-name"
+   402→                    placeholder="John Doe"
+   403→                    value={newUserForm.name}
+   404→                    onChange={(e) => setNewUserForm((f) => ({ ...f, name: e.target.value }))}
+   405→                    required
+   406→                  />
+   407→                </div>
+   408→                <div className="grid gap-2">
+   409→                  <Label htmlFor="new-email">Email</Label>
+   410→                  <Input
+   411→                    id="new-email"
+   412→                    type="email"
+   413→                    placeholder="john@example.com"
+   414→                    value={newUserForm.email}
+   415→                    onChange={(e) => setNewUserForm((f) => ({ ...f, email: e.target.value }))}
+   416→                    required
+   417→                  />
+   418→                </div>
+   419→                <div className="grid gap-2">
+   420→                  <Label htmlFor="new-password">Password</Label>
+   421→                  <Input
+   422→                    id="new-password"
+   423→                    type="password"
+   424→                    placeholder="Minimum 8 characters"
+   425→                    minLength={8}
+   426→                    value={newUserForm.password}
+   427→                    onChange={(e) => setNewUserForm((f) => ({ ...f, password: e.target.value }))}
+   428→                    required
+   429→                  />
+   430→                </div>
+   431→                <div className="grid grid-cols-2 gap-4">
+   432→                  <div className="grid gap-2">
+   433→                    <Label>Role</Label>
+   434→                    <Select
+   435→                      value={newUserForm.platformRole}
+   436→                      onValueChange={(v) => setNewUserForm((f) => ({ ...f, platformRole: v }))}
+   437→                    >
+   438→                      <SelectTrigger>
+   439→                        <SelectValue />
+   440→                      </SelectTrigger>
+   441→                      <SelectContent>
+   442→                        <SelectItem value="USER">User</SelectItem>
+   443→                        <SelectItem value="SUPPORT">Support</SelectItem>
+   444→                        <SelectItem value="PLATFORM_ADMIN">Admin</SelectItem>
+   445→                      </SelectContent>
+   446→                    </Select>
+   447→                  </div>
+   448→                  <div className="grid gap-2">
+   449→                    <Label>Status</Label>
+   450→                    <Select
+   451→                      value={newUserForm.status}
+   452→                      onValueChange={(v) => setNewUserForm((f) => ({ ...f, status: v }))}
+   453→                    >
+   454→                      <SelectTrigger>
+   455→                        <SelectValue />
+   456→                      </SelectTrigger>
+   457→                      <SelectContent>
+   458→                        <SelectItem value="ACTIVE">Active</SelectItem>
+   459→                        <SelectItem value="PENDING_VERIFICATION">Pending Verification</SelectItem>
+   460→                        <SelectItem value="SUSPENDED">Suspended</SelectItem>
+   461→                      </SelectContent>
+   462→                    </Select>
+   463→                  </div>
+   464→                </div>
+   465→              </div>
+   466→              <DialogFooter>
+   467→                <Button type="button" variant="outline" onClick={() => setNewUserOpen(false)}>
+   468→                  Cancel
+   469→                </Button>
+   470→                <Button type="submit" disabled={newUserSubmitting}>
+   471→                  {newUserSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   472→                  Create User
+   473→                </Button>
+   474→              </DialogFooter>
+   475→            </form>
+   476→          </DialogContent>
+   477→        </Dialog>
+   478→      </div>
+   479→
+   480→      {/* ── Filters ── */}
+   481→      <Card>
+   482→        <CardContent className="p-4">
+   483→          <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
+   484→            <div className="relative flex-1">
+   485→              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   486→              <Input
+   487→                placeholder="Search by name or email..."
+   488→                value={searchInput}
+   489→                onChange={(e) => setSearchInput(e.target.value)}
+   490→                className="pl-9"
+   491→              />
+   492→            </div>
+   493→            <Select value={statusFilter} onValueChange={setStatusFilter}>
+   494→              <SelectTrigger className="w-full sm:w-[180px]">
+   495→                <SelectValue placeholder="Status" />
+   496→              </SelectTrigger>
+   497→              <SelectContent>
+   498→                <SelectItem value="ALL">All Statuses</SelectItem>
+   499→                <SelectItem value="ACTIVE">Active</SelectItem>
+   500→                <SelectItem value="SUSPENDED">Suspended</SelectItem>
+   501→                <SelectItem value="DELETED">Deleted</SelectItem>
+   502→                <SelectItem value="PENDING_VERIFICATION">Pending Verification</SelectItem>
+   503→              </SelectContent>
+   504→            </Select>
+   505→            <Select value={roleFilter} onValueChange={setRoleFilter}>
+   506→              <SelectTrigger className="w-full sm:w-[160px]">
+   507→                <SelectValue placeholder="Role" />
+   508→              </SelectTrigger>
+   509→              <SelectContent>
+   510→                <SelectItem value="ALL">All Roles</SelectItem>
+   511→                <SelectItem value="USER">User</SelectItem>
+   512→                <SelectItem value="SUPPORT">Support</SelectItem>
+   513→                <SelectItem value="PLATFORM_ADMIN">Admin</SelectItem>
+   514→              </SelectContent>
+   515→            </Select>
+   516→            <Button type="submit" variant="secondary" className="gap-2">
+   517→              <Search className="h-4 w-4" />
+   518→              <span className="sm:hidden">Search</span>
+   519→            </Button>
+   520→          </form>
+   521→        </CardContent>
+   522→      </Card>
+   523→
+   524→      {/* ── Table ── */}
+   525→      <Card>
+   526→        <CardHeader className="pb-3">
+   527→          <CardTitle className="text-base font-semibold flex items-center gap-2">
+   528→            <Users className="h-4 w-4" />
+   529→            User Accounts
+   530→            {total > 0 && (
+   531→              <span className="text-sm font-normal text-muted-foreground">
+   532→                ({total} total)
+   533→              </span>
+   534→            )}
+   535→          </CardTitle>
+   536→        </CardHeader>
+   537→        <CardContent className="p-0">
+   538→          <div className="overflow-x-auto">
+   539→            <Table>
+   540→              <TableHeader>
+   541→                <TableRow>
+   542→                  <TableHead className="min-w-[220px]">Name / Email</TableHead>
+   543→                  <TableHead className="w-[100px]">Role</TableHead>
+   544→                  <TableHead className="w-[140px]">Status</TableHead>
+   545→                  <TableHead className="w-[80px] text-center">Sessions</TableHead>
+   546→                  <TableHead className="w-[100px] text-center">Workspaces</TableHead>
+   547→                  <TableHead className="w-[100px]">Last Login</TableHead>
+   548→                  <TableHead className="w-[110px]">Created</TableHead>
+   549→                  <TableHead className="w-[60px]">
+   550→                    <span className="sr-only">Actions</span>
+   551→                  </TableHead>
+   552→                </TableRow>
+   553→              </TableHeader>
+   554→              <TableBody>
+   555→                {loading ? (
+   556→                  Array.from({ length: 10 }).map((_, i) => (
+   557→                    <TableRow key={i}>
+   558→                      <TableCell>
+   559→                        <div className="flex items-center gap-3">
+   560→                          <Skeleton className="h-8 w-8 rounded-full" />
+   561→                          <div className="space-y-1.5">
+   562→                            <Skeleton className="h-4 w-[140px]" />
+   563→                            <Skeleton className="h-3 w-[180px]" />
+   564→                          </div>
+   565→                        </div>
+   566→                      </TableCell>
+   567→                      <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+   568→                      <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
+   569→                      <TableCell><Skeleton className="h-4 w-6 mx-auto" /></TableCell>
+   570→                      <TableCell><Skeleton className="h-4 w-6 mx-auto" /></TableCell>
+   571→                      <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+   572→                      <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+   573→                      <TableCell><Skeleton className="h-8 w-8" /></TableCell>
+   574→                    </TableRow>
+   575→                  ))
+   576→                ) : error ? (
+   577→                  <TableRow>
+   578→                    <TableCell colSpan={8}>
+   579→                      <div className="flex flex-col items-center justify-center py-16 gap-3">
+   580→                        <AlertCircle className="h-10 w-10 text-destructive" />
+   581→                        <p className="text-sm text-muted-foreground">{error}</p>
+   582→                        <Button variant="outline" size="sm" onClick={fetchUsers} className="gap-2">
+   583→                          <RefreshCw className="h-3.5 w-3.5" />
+   584→                          Retry
+   585→                        </Button>
+   586→                      </div>
+   587→                    </TableCell>
+   588→                  </TableRow>
+   589→                ) : users.length === 0 ? (
+   590→                  <TableRow>
+   591→                    <TableCell colSpan={8}>
+   592→                      <div className="flex flex-col items-center justify-center py-16 gap-3">
+   593→                        <Users className="h-12 w-12 text-muted-foreground/30" />
+   594→                        <p className="text-sm font-medium text-muted-foreground">No users found</p>
+   595→                        <p className="text-xs text-muted-foreground/70">
+   596→                          {search || statusFilter !== 'ALL' || roleFilter !== 'ALL'
+   597→                            ? 'Try adjusting your search or filters.'
+   598→                            : 'Create the first user to get started.'}
+   599→                        </p>
+   600→                      </div>
+   601→                    </TableCell>
+   602→                  </TableRow>
+   603→                ) : (
+   604→                  users.map((user) => (
+   605→                    <TableRow key={user.id}>
+   606→                      <TableCell>
+   607→                        <div className="flex items-center gap-3">
+   608→                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+   609→                            {user.name
+   610→                              ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+   611→                              : user.email[0].toUpperCase()}
+   612→                          </div>
+   613→                          <div className="min-w-0">
+   614→                            <p className="text-sm font-medium truncate">
+   615→                              {user.name || 'Unnamed User'}
+   616→                            </p>
+   617→                            <p className="text-xs text-muted-foreground truncate">
+   618→                              {user.email}
+   619→                            </p>
+   620→                          </div>
+   621→                        </div>
+   622→                      </TableCell>
+   623→                      <TableCell>
+   624→                        <Badge variant="outline" className={roleColor(user.platformRole)}>
+   625→                          {formatRole(user.platformRole)}
+   626→                        </Badge>
+   627→                      </TableCell>
+   628→                      <TableCell>
+   629→                        <Badge variant="outline" className={statusColor(user.status)}>
+   630→                          {formatStatus(user.status)}
+   631→                        </Badge>
+   632→                      </TableCell>
+   633→                      <TableCell className="text-center text-sm">
+   634→                        {user._count.sessions}
+   635→                      </TableCell>
+   636→                      <TableCell className="text-center text-sm">
+   637→                        {user._count.workspaceMembers}
+   638→                      </TableCell>
+   639→                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+   640→                        {relativeTime(user.lastLoginAt)}
+   641→                      </TableCell>
+   642→                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+   643→                        {formatDate(user.createdAt)}
+   644→                      </TableCell>
+   645→                      <TableCell>
+   646→                        <DropdownMenu>
+   647→                          <DropdownMenuTrigger asChild>
+   648→                            <Button
+   649→                              variant="ghost"
+   650→                              size="icon"
+   651→                              className="h-8 w-8"
+   652→                              disabled={mutating === user.id}
+   653→                            >
+   654→                              {mutating === user.id ? (
+   655→                                <Loader2 className="h-4 w-4 animate-spin" />
+   656→                              ) : (
+   657→                                <MoreHorizontal className="h-4 w-4" />
+   658→                              )}
+   659→                              <span className="sr-only">Open menu</span>
+   660→                            </Button>
+   661→                          </DropdownMenuTrigger>
+   662→                          <DropdownMenuContent align="end" className="w-48">
+   663→                            <DropdownMenuItem onClick={() => handleViewDetail(user.id)} className="gap-2">
+   664→                              <Eye className="h-4 w-4" />
+   665→                              View Details
+   666→                            </DropdownMenuItem>
+   667→
+   668→                            <DropdownMenuSub>
+   669→                              <DropdownMenuSubTrigger className="gap-2">
+   670→                                <UserCog className="h-4 w-4" />
+   671→                                Change Role
+   672→                              </DropdownMenuSubTrigger>
+   673→                              <DropdownMenuSubContent>
+   674→                                <DropdownMenuItem
+   675→                                  onClick={() => handleChangeRole(user.id, 'USER')}
+   676→                                  disabled={user.platformRole === 'USER'}
+   677→                                >
+   678→                                  User
+   679→                                </DropdownMenuItem>
+   680→                                <DropdownMenuItem
+   681→                                  onClick={() => handleChangeRole(user.id, 'SUPPORT')}
+   682→                                  disabled={user.platformRole === 'SUPPORT'}
+   683→                                >
+   684→                                  Support
+   685→                                </DropdownMenuItem>
+   686→                                <DropdownMenuItem
+   687→                                  onClick={() => handleChangeRole(user.id, 'PLATFORM_ADMIN')}
+   688→                                  disabled={user.platformRole === 'PLATFORM_ADMIN'}
+   689→                                >
+   690→                                  Admin
+   691→                                </DropdownMenuItem>
+   692→                              </DropdownMenuSubContent>
+   693→                            </DropdownMenuSub>
+   694→
+   695→                            <DropdownMenuSeparator />
+   696→
+   697→                            {user.status === 'ACTIVE' ? (
+   698→                              <DropdownMenuItem
+   699→                                onClick={() => handleToggleStatus(user.id, user.status)}
+   700→                                className="gap-2 text-amber-600 focus:text-amber-600"
+   701→                              >
+   702→                                <Ban className="h-4 w-4" />
+   703→                                Suspend User
+   704→                              </DropdownMenuItem>
+   705→                            ) : user.status === 'SUSPENDED' ? (
+   706→                              <DropdownMenuItem
+   707→                                onClick={() => handleToggleStatus(user.id, user.status)}
+   708→                                className="gap-2 text-emerald-600 focus:text-emerald-600"
+   709→                              >
+   710→                                <CheckCircle2 className="h-4 w-4" />
+   711→                                Activate User
+   712→                              </DropdownMenuItem>
+   713→                            ) : null}
+   714→
+   715→                            {user.status !== 'DELETED' && (
+   716→                              <>
+   717→                                <DropdownMenuSeparator />
+   718→                                <AlertDialog>
+   719→                                  <AlertDialogTrigger asChild>
+   720→                                    <DropdownMenuItem
+   721→                                      className="gap-2 text-destructive focus:text-destructive"
+   722→                                      onSelect={(e) => e.preventDefault()}
+   723→                                    >
+   724→                                      <Trash2 className="h-4 w-4" />
+   725→                                      Delete User
+   726→                                    </DropdownMenuItem>
+   727→                                  </AlertDialogTrigger>
+   728→                                  <AlertDialogContent>
+   729→                                    <AlertDialogHeader>
+   730→                                      <AlertDialogTitle>Delete User</AlertDialogTitle>
+   731→                                      <AlertDialogDescription>
+   732→                                        Are you sure you want to delete{' '}
+   733→                                        <span className="font-semibold">{user.name || user.email}</span>? This action
+   734→                                        will mark the account as deleted and revoke all active sessions. This action
+   735→                                        cannot be easily undone.
+   736→                                      </AlertDialogDescription>
+   737→                                    </AlertDialogHeader>
+   738→                                    <AlertDialogFooter>
+   739→                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+   740→                                      <AlertDialogAction
+   741→                                        onClick={() => handleDelete(user.id)}
+   742→                                        className="bg-destructive text-white hover:bg-destructive/90"
+   743→                                      >
+   744→                                        Delete
+   745→                                      </AlertDialogAction>
+   746→                                    </AlertDialogFooter>
+   747→                                  </AlertDialogContent>
+   748→                                </AlertDialog>
+   749→                              </>
+   750→                            )}
+   751→                          </DropdownMenuContent>
+   752→                        </DropdownMenu>
+   753→                      </TableCell>
+   754→                    </TableRow>
+   755→                  ))
+   756→                )}
+   757→              </TableBody>
+   758→            </Table>
+   759→          </div>
+   760→
+   761→          {/* ── Pagination ── */}
+   762→          {!loading && !error && users.length > 0 && (
+   763→            <div className="flex items-center justify-between border-t px-4 py-3">
+   764→              <p className="text-sm text-muted-foreground">
+   765→                Showing {startIdx}–{endIdx} of {total}
+   766→              </p>
+   767→              <div className="flex items-center gap-2">
+   768→                <Button
+   769→                  variant="outline"
+   770→                  size="sm"
+   771→                  onClick={handlePrev}
+   772→                  disabled={!prevCursor || loading}
+   773→                  className="gap-1"
+   774→                >
+   775→                  <ChevronLeft className="h-4 w-4" />
+   776→                  Previous
+   777→                </Button>
+   778→                <Button
+   779→                  variant="outline"
+   780→                  size="sm"
+   781→                  onClick={handleNext}
+   782→                  disabled={!nextCursor || loading}
+   783→                  className="gap-1"
+   784→                >
+   785→                  Next
+   786→                  <ChevronRight className="h-4 w-4" />
+   787→                </Button>
+   788→              </div>
+   789→            </div>
+   790→          )}
+   791→        </CardContent>
+   792→      </Card>
+   793→
+   794→      {/* ── User Detail Dialog ── */}
+   795→      <Dialog
+   796→        open={detailOpen}
+   797→        onOpenChange={(open) => {
+   798→          if (!open) setDetailUser(null)
+   799→          setDetailOpen(open)
+   800→        }}
+   801→      >
+   802→        <DialogContent className="sm:max-w-lg">
+   803→          {detailLoading ? (
+   804→            <div className="space-y-4 py-6">
+   805→              <div className="flex items-center gap-4">
+   806→                <Skeleton className="h-14 w-14 rounded-full" />
+   807→                <div className="space-y-2">
+   808→                  <Skeleton className="h-5 w-40" />
+   809→                  <Skeleton className="h-4 w-52" />
+   810→                </div>
+   811→              </div>
+   812→              <Skeleton className="h-px w-full" />
+   813→              <div className="grid grid-cols-2 gap-4">
+   814→                {Array.from({ length: 6 }).map((_, i) => (
+   815→                  <div key={i} className="space-y-1.5">
+   816→                    <Skeleton className="h-3 w-20" />
+   817→                    <Skeleton className="h-5 w-28" />
+   818→                  </div>
+   819→                ))}
+   820→              </div>
+   821→            </div>
+   822→          ) : detailUser ? (
+   823→            <>
+   824→              <DialogHeader>
+   825→                <DialogTitle>User Details</DialogTitle>
+   826→                <DialogDescription>
+   827→                  Detailed information about this user account.
+   828→                </DialogDescription>
+   829→              </DialogHeader>
+   830→              <div className="space-y-6">
+   831→                {/* Profile header */}
+   832→                <div className="flex items-center gap-4">
+   833→                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-muted text-lg font-semibold">
+   834→                    {detailUser.name
+   835→                      ? detailUser.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+   836→                      : detailUser.email[0].toUpperCase()}
+   837→                  </div>
+   838→                  <div className="min-w-0">
+   839→                    <h3 className="text-lg font-semibold truncate">
+   840→                      {detailUser.name || 'Unnamed User'}
+   841→                    </h3>
+   842→                    <p className="text-sm text-muted-foreground truncate">{detailUser.email}</p>
+   843→                  </div>
+   844→                </div>
+   845→
+   846→                {/* Status & Role badges */}
+   847→                <div className="flex flex-wrap gap-2">
+   848→                  <Badge variant="outline" className={statusColor(detailUser.status)}>
+   849→                    {formatStatus(detailUser.status)}
+   850→                  </Badge>
+   851→                  <Badge variant="outline" className={roleColor(detailUser.platformRole)}>
+   852→                    <Shield className="mr-1 h-3 w-3" />
+   853→                    {formatRole(detailUser.platformRole)}
+   854→                  </Badge>
+   855→                </div>
+   856→
+   857→                {/* Details grid */}
+   858→                <div className="grid grid-cols-2 gap-4 rounded-lg border p-4">
+   859→                  <div>
+   860→                    <p className="text-xs text-muted-foreground">User ID</p>
+   861→                    <p className="text-sm font-mono mt-0.5 truncate" title={detailUser.id}>
+   862→                      {detailUser.id.slice(0, 12)}...
+   863→                    </p>
+   864→                  </div>
+   865→                  <div>
+   866→                    <p className="text-xs text-muted-foreground">Locale</p>
+   867→                    <p className="text-sm font-medium mt-0.5">{detailUser.locale || '\u2014'}</p>
+   868→                  </div>
+   869→                  <div>
+   870→                    <p className="text-xs text-muted-foreground">Sessions</p>
+   871→                    <p className="text-sm font-medium mt-0.5">{detailUser._count.sessions}</p>
+   872→                  </div>
+   873→                  <div>
+   874→                    <p className="text-xs text-muted-foreground">Workspaces</p>
+   875→                    <p className="text-sm font-medium mt-0.5">{detailUser._count.workspaceMembers}</p>
+   876→                  </div>
+   877→                  <div>
+   878→                    <p className="text-xs text-muted-foreground">Last Login</p>
+   879→                    <p className="text-sm font-medium mt-0.5">
+   880→                      {relativeTime(detailUser.lastLoginAt)}
+   881→                    </p>
+   882→                  </div>
+   883→                  <div>
+   884→                    <p className="text-xs text-muted-foreground">Failed Logins</p>
+   885→                    <p className="text-sm font-medium mt-0.5">{detailUser.failedLoginCount}</p>
+   886→                  </div>
+   887→                  <div>
+   888→                    <p className="text-xs text-muted-foreground">Locked Until</p>
+   889→                    <p className="text-sm font-medium mt-0.5">
+   890→                      {detailUser.lockedUntil
+   891→                        ? new Date(detailUser.lockedUntil).toLocaleString()
+   892→                        : '\u2014'}
+   893→                    </p>
+   894→                  </div>
+   895→                  <div>
+   896→                    <p className="text-xs text-muted-foreground">Created</p>
+   897→                    <p className="text-sm font-medium mt-0.5">
+   898→                      {new Date(detailUser.createdAt).toLocaleString()}
+   899→                    </p>
+   900→                  </div>
+   901→                </div>
+   902→
+   903→                <div>
+   904→                  <p className="text-xs text-muted-foreground">Last Updated</p>
+   905→                  <p className="text-sm font-medium mt-0.5">
+   906→                    {new Date(detailUser.updatedAt).toLocaleString()}
+   907→                  </p>
+   908→                </div>
+   909→              </div>
+   910→            </>
+   911→          ) : null}
+   912→        </DialogContent>
+   913→      </Dialog>
+   914→    </div>
+   915→  )
+   916→}
+   917→

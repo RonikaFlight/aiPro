@@ -1150,3 +1150,77 @@ Stage Summary:
 - Created: tests/isolation/test-env.ts (env var preload)
 - Fixed: src/lib/workspace-service.ts getWorkspace() plan include bug
 - Updated: IMPLEMENTATION_CHECKLIST.md line 38 marked [x]
+
+---
+Task ID: 3 (Admin Pages)
+Agent: main (Z.ai Code)
+Task: Implement Admin pages — `/admin` with sub-pages (users, workspaces, runs, jobs, subscriptions, security-events, system-health, feature-flags)
+
+Work Log:
+- Read PROJECT_MEMORY.md and IMPLEMENTATION_CHECKLIST.md to identify first incomplete item (line 128: Admin pages)
+- Explored existing codebase: Prisma schema (40 models), permissions system (PLATFORM_ADMIN), auth-context (requirePlatformAdmin), API route patterns, existing page patterns
+- Created directory structure: `src/app/admin/` with 9 page directories, `src/app/api/v1/admin/` with 11 API route directories
+- Created 11 admin API routes via subagent:
+  - GET /api/v1/admin/stats (platform-wide aggregate statistics)
+  - GET+POST /api/v1/admin/users (list users with cursor/search/filter, create user with Argon2id)
+  - GET+PATCH+DELETE /api/v1/admin/users/[userId] (user detail, update fields, suspend)
+  - GET /api/v1/admin/workspaces (list workspaces with cursor/search)
+  - GET /api/v1/admin/runs (list scan runs with cursor/status/workspaceId filters)
+  - GET /api/v1/admin/jobs (list queue jobs with cursor/queue/status filters)
+  - GET /api/v1/admin/subscriptions (list subscriptions with cursor/status filter)
+  - GET /api/v1/admin/security-events (list security events with cursor/type/severity, limit 50)
+  - GET /api/v1/admin/system-health (DB health, queue breakdown, recent errors, uptime, memory, LLM usage)
+  - GET+POST /api/v1/admin/feature-flags (list all flags, create with Zod validation)
+  - PATCH+DELETE /api/v1/admin/feature-flags/[flagId] (update flag, delete flag)
+- Created admin layout (`src/app/admin/layout.tsx`): collapsible sidebar, mobile responsive, emerald theme, platform admin auth check via stats endpoint fetch, redirects non-admin to /app
+- Created 9 admin pages via parallel subagents:
+  - /admin (overview dashboard with stat cards + quick access grid)
+  - /admin/users (CRUD table with filters, pagination, new user dialog, role/status badges)
+  - /admin/workspaces (table with search, owner info, project/member/subscription counts)
+  - /admin/runs (table with status badges, project links, duration calculation)
+  - /admin/jobs (table with queue badges, attempts, failure reason, priority)
+  - /admin/subscriptions (table with plan/price/period, status filter toggle buttons)
+  - /admin/security-events (table with severity badges, humanized event types)
+  - /admin/system-health (DB/queue/memory/uptime cards, security events table, LLM usage, collapsible queue details)
+  - /admin/feature-flags (table with toggle switches, create/edit/delete dialogs, rollout slider)
+- Fixed lint error: extracted SidebarContent from nested component definition to standalone component with props
+- Fixed lint error: replaced useEffect-based setMobileOpen with render-time pathname comparison
+- Fixed system-health page type mismatch: updated interface and field access to match actual API response format (byQueueAndStatus array, uptime object, memory Bytes fields, llmUsageLast7Days, recentErrorsBySeverity)
+- Added required env vars to .env: SESSION_SECRET, CSRF_SECRET, PROOFPILOT_ENCRYPTION_KEY, APP_URL, SESSION_COOKIE_NAME (without __Host- prefix for HTTP dev)
+- All pages verified: login as admin@proofpilot.local, navigate to /admin, verified all 9 pages render correctly with data
+- ESLint: 0 errors, 0 warnings
+- IMPLEMENTATION_CHECKLIST.md updated: line 128 marked [x]
+
+Stage Summary:
+- Admin section fully implemented: 11 API routes + 9 pages + layout with sidebar
+- All routes protected by requirePlatformAdmin()
+- Consistent emerald/green color scheme, responsive design, loading/error/empty states
+- Browser-verified: admin login, sidebar navigation, all pages render with real data
+
+---
+Task ID: 4 (Persian/RTL UI + Deployment Hooks + Slack Notifications)
+Agent: main (Z.ai Code)
+Task: Implement Persian/RTL UI, Deployment hooks, and Slack notifications
+
+Work Log:
+- Created i18n infrastructure: src/i18n/routing.ts (en/fa locales), src/i18n/request.ts (cookie-based locale), src/middleware.ts (locale cookie initialization)
+- Created comprehensive English translations (messages/en.json, ~480 keys, 20 sections)
+- Created complete Persian translations (messages/fa.json, matching all en.json keys)
+- Updated next.config.ts with createNextIntlPlugin
+- Updated src/app/layout.tsx: dynamic dir="rtl"/"ltr" and lang on <html>, NextIntlClientProvider, arabic font subset
+- Created src/components/locale-switcher.tsx (dropdown with flags, locale cookie via API)
+- Created src/app/api/v1/locale/route.ts (POST to set locale cookie)
+- Added comprehensive [dir="rtl"] CSS overrides to globals.css (padding, margin, text alignment, borders, rounded corners, icon rotation, RTL font fallback)
+- Verified: dir="rtl" for fa, dir="ltr" for en, lang attribute correct, locale API working
+- Created src/lib/deployment-hook-service.ts (~310 lines): CRUD, HMAC-SHA256 signature verification, processing pipeline with branch filter, replay protection, idempotency, scan triggering
+- Created deployment hooks API routes (3 files): list/create, toggle/delete, incoming webhook (public, HMAC-verified)
+- Created src/lib/slack-service.ts (~693 lines): Slack integration with Block Kit formatting for 5 event types, SSRF protection, rate limiting, encrypted storage
+- Created Slack API routes (2 files): config CRUD, test webhook
+- All lint checks pass (0 errors)
+
+Stage Summary:
+- Persian/RTL UI: next-intl integrated, 480+ translations in EN/FA, locale switcher, RTL CSS support
+- Deployment Hooks: Full service + 3 API routes, HMAC-signed, rate-limited, idempotent, replay-protected
+- Slack Notifications: Full service + 2 API routes, Block Kit messages, 5 event types, SSRF protection
+- IMPLEMENTATION_CHECKLIST.md updated: lines 134, 139, 140 marked [x]
+- All Phase 11 Integrations & Operations items now complete
