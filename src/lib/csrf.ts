@@ -59,37 +59,45 @@ export function assertCsrf(request: Request): void {
   }
 
   // Check Origin / Referer
-  const origin = request.headers.get('origin')
-  const referer = request.headers.get('referer')
-  const allowedOrigins = [env.APP_URL, 'http://localhost:3000']
+  // In development mode, skip strict origin checking — CSRF tokens still protect
+  // state-changing requests. In production, validate origins strictly.
   if (env.APP_ENV === 'development') {
-    allowedOrigins.push('http://localhost:3000')
-  }
-
-  // Also allow the origin derived from the request's own Host header
-  // so requests through reverse proxies (Caddy, etc.) are accepted
-  const hostHeader = request.headers.get('host')
-  if (hostHeader) {
-    const protocol = request.headers.get('x-forwarded-proto') || 'https'
-    allowedOrigins.push(`${protocol}://${hostHeader}`)
-  }
-
-  if (origin) {
-    if (!allowedOrigins.includes(origin)) {
-      throw new ForbiddenError(`Invalid Origin: ${origin}`)
+    // Still require Origin or Referer to exist (just not validate its value)
+    const origin = request.headers.get('origin')
+    const referer = request.headers.get('referer')
+    if (!origin && !referer) {
+      throw new ForbiddenError('Missing Origin/Referer header')
     }
-  } else if (referer) {
-    try {
-      const refererUrl = new URL(referer)
-      if (!allowedOrigins.includes(refererUrl.origin)) {
-        throw new ForbiddenError(`Invalid Referer: ${refererUrl.origin}`)
-      }
-    } catch {
-      throw new ForbiddenError('Malformed Referer')
-    }
+    // Proceed to CSRF token check below (skip origin matching)
   } else {
-    // No Origin/Referer on state-changing request — suspicious
-    throw new ForbiddenError('Missing Origin/Referer header')
+    const origin = request.headers.get('origin')
+    const referer = request.headers.get('referer')
+    const allowedOrigins = [env.APP_URL]
+
+    // Also allow the origin derived from the request's own Host header
+    // so requests through reverse proxies (Caddy, etc.) are accepted
+    const hostHeader = request.headers.get('host')
+    if (hostHeader) {
+      const protocol = request.headers.get('x-forwarded-proto') || 'https'
+      allowedOrigins.push(`${protocol}://${hostHeader}`)
+    }
+
+    if (origin) {
+      if (!allowedOrigins.includes(origin)) {
+        throw new ForbiddenError(`Invalid Origin: ${origin}`)
+      }
+    } else if (referer) {
+      try {
+        const refererUrl = new URL(referer)
+        if (!allowedOrigins.includes(refererUrl.origin)) {
+          throw new ForbiddenError(`Invalid Referer: ${refererUrl.origin}`)
+        }
+      } catch {
+        throw new ForbiddenError('Malformed Referer')
+      }
+    } else {
+      throw new ForbiddenError('Missing Origin/Referer header')
+    }
   }
 
   // Check CSRF token (for non-GET requests)
