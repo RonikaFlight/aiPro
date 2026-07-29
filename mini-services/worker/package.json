@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "bun src/index.ts"
+    "dev": "npx tsx --watch src/index.ts",
+    "start": "npx tsx src/index.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/node": "^22"
   }
 }

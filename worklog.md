@@ -1459,3 +1459,30 @@ Stage Summary:
 - `src/components/landing/Navbar.tsx`: Replaced `useState` + `useEffect` mount detection with `useSyncExternalStore`
 - Lint passes cleanly
 - Browser-verified: zero hydration errors on homepage (desktop + mobile viewports)
+---
+Task ID: 3-migrate-bun-to-npm
+Agent: main (Z.ai Code)
+Task: Migrate project from bun to npm package manager
+
+Work Log:
+- Removed `bunfig.toml`
+- Updated `package.json` scripts: replaced `bun run` with `node`/`npx tsx`
+  - `start`: `bun .next/standalone/server.js` → `node .next/standalone/server.js`
+  - `seed`: `bun run scripts/seed.ts` → `npx tsx scripts/seed.ts`
+  - `worker`: `bun run dev` → `npx tsx --watch src/index.ts`
+  - `test`/`test:e2e`: replaced `bun test` with placeholder (no npm test runner configured)
+- Replaced `bun-types` devDependency with `@types/node`
+- Migrated worker mini-service from `Bun.serve()` to Node.js `http.createServer()`
+- Updated worker `package.json` with `tsx` as dev dependency
+- Removed `/// <reference types="bun-types" />` from worker index.ts
+- Updated seed script shebang and comments
+- Ran `rm -rf node_modules && npm install` (858 packages)
+- Approved postinstall scripts for prisma, sharp, argon2, swc
+- Generated Prisma client with `npx prisma generate`
+- Verified dev server starts and responds on port 3000 with `npm run dev`
+
+Stage Summary:
+- Bun fully removed from project; npm is now the sole package manager
+- `package-lock.json` generated
+- Worker mini-service migrated from Bun.serve to node:http
+- Dev server verified working: `npm run dev` → 200 OK

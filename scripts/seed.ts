@@ -1,6 +1,5 @@
-#!/usr/bin/env bun
 /**
- * Seed runner — `bun run scripts/seed.ts`
+ * Seed runner — `npm run seed` or `npx tsx scripts/seed.ts`
  */
 import { runSeed } from '../src/lib/seed'
 import { disconnectDb } from '../src/lib/db'

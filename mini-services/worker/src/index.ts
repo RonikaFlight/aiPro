@@ -1,4 +1,3 @@
-/// <reference types="bun-types" />
 /**
  * ProofPilot worker mini-service — entry point
  *
@@ -12,8 +11,9 @@
  * The worker shares the same SQLite database + Prisma client as the Next.js
  * app (file-based DB supports concurrent read/write from separate processes).
  *
- * Run: `bun --hot src/index.ts` (auto-restart on file changes)
+ * Run: `npx tsx --watch src/index.ts` (auto-restart on file changes)
  */
+import http from 'node:http'
 import { db } from '../../../src/lib/db'
 import { env } from '../../../src/lib/env'
 import { logger } from '../../../src/lib/logger'
@@ -65,28 +65,44 @@ for (const q of stubQueues) {
   )
 }
 
+// ---- JSON helper ----
+function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Buffer {
+  const body = JSON.stringify(data)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Request-Id',
+    ...extraHeaders,
+  }
+  const headerStr = Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n')
+  const head = `HTTP/1.1 ${status} ${status === 200 ? 'OK' : status === 204 ? 'No Content' : status === 404 ? 'Not Found' : status === 500 ? 'Internal Server Error' : 'Error'}\r\n${headerStr}\r\n\r\n`
+  return Buffer.from(head + (status === 204 ? '' : body))
+}
+
 // ---- HTTP server ----
-const server = Bun.serve({
-  port: PORT,
-  async fetch(req) {
-    const url = new URL(req.url)
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url || '/', `http://localhost:${PORT}`)
     const path = url.pathname
 
-    // CORS + JSON headers
-    const headers = {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Request-Id',
-    }
-
+    // CORS preflight
     if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers })
+      const buf = jsonResponse(null, 204)
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Request-Id',
+      })
+      res.end()
+      return
     }
 
     // Health: liveness
     if (path === '/health/live') {
-      return Response.json({ status: 'alive', service: 'proofpilot-worker', port: PORT }, { headers })
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ status: 'alive', service: 'proofpilot-worker', port: PORT }))
+      return
     }
 
     // Health: readiness (DB ping + queue stats)
@@ -96,18 +112,18 @@ const server = Bun.serve({
         const waiting = await db.queueJob.count({ where: { status: 'WAITING' } })
         const active = await db.queueJob.count({ where: { status: 'ACTIVE' } })
         const failed = await db.queueJob.count({ where: { status: 'FAILED' } })
-        return Response.json({
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        res.end(JSON.stringify({
           status: 'ready',
           database: 'ok',
           queues: { waiting, active, failed },
           uptime: process.uptime(),
-        }, { headers })
+        }))
       } catch (err) {
-        return Response.json({
-          status: 'unhealthy',
-          error: String(err),
-        }, { status: 503, headers })
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        res.end(JSON.stringify({ status: 'unhealthy', error: String(err) }))
       }
+      return
     }
 
     // Status: detailed worker info
@@ -117,34 +133,35 @@ const server = Bun.serve({
         _count: true,
         orderBy: { queue: 'asc' },
       })
-      return Response.json({
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({
         service: 'proofpilot-worker',
         version: '0.1.0',
         port: PORT,
         uptime: process.uptime(),
         queues: queues.map((q) => ({ queue: q.queue, status: q.status, count: q._count })),
-      }, { headers })
+      }))
+      return
     }
 
     // 404
-    return Response.json(
-      { error: 'Not found', path },
-      { status: 404, headers },
-    )
-  },
-  error(err) {
+    res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+    res.end(JSON.stringify({ error: 'Not found', path }))
+  } catch (err) {
     logger.error('Worker HTTP server error', { error: String(err) })
-    return new Response(JSON.stringify({ error: 'Internal error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  },
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Internal error' }))
+    }
+  }
 })
 
-logger.info('ProofPilot worker started', {
-  port: PORT,
-  concurrency: env.WORKER_CONCURRENCY,
-  appEnv: env.APP_ENV,
+server.listen(PORT, () => {
+  logger.info('ProofPilot worker started', {
+    port: PORT,
+    concurrency: env.WORKER_CONCURRENCY,
+    appEnv: env.APP_ENV,
+  })
 })
 
 // ---- Start queue workers ----
@@ -158,8 +175,9 @@ for (const q of queues) {
 // ---- Graceful shutdown ----
 const shutdown = (signal: string) => {
   logger.info('Worker shutting down', { signal })
-  server.stop()
-  setTimeout(() => process.exit(0), 1000)
+  server.close(() => {
+    setTimeout(() => process.exit(0), 1000)
+  })
 }
 process.on('SIGINT', () => shutdown('SIGINT'))
 process.on('SIGTERM', () => shutdown('SIGTERM'))
