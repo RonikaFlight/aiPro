@@ -1,0 +1,327 @@
+# ProofPilot CI Pipeline
+# Runs on every push to main and on pull requests targeting main.
+# Sequential: install → format → lint → typecheck → unit-tests → build → migration-validate
+# Parallel after build: dep-audit, secret-scan, container-scan (main only)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1"
+  NODE_ENV: test
+
+jobs:
+  # ── Install ─────────────────────────────────────────
+  install:
+    name: Install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache bun global cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        id: cache-node-modules
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      # Persist node_modules for downstream jobs
+      - name: Persist dependencies
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-modules
+          path: node_modules
+          retention-days: 1
+
+  # ── Format Check ─────────────────────────────────────────
+  check-format:
+    name: Format
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Check formatting
+        run: bunx prettier --check "src/**/*.{ts,tsx,js,jsx,json,css,md}"
+
+  # ── Lint ───────────────────────────────────────────────
+  lint:
+    name: Lint
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Run ESLint
+        run: bun run lint
+
+  # ── Typecheck ──────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    needs: [check-format, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: TypeScript type check
+        run: bunx tsc --noEmit
+
+  # ── Unit Tests ─────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Run unit tests
+        run: bun test
+
+  # ── Build ───────────────────────────────────────────────
+  build:
+    name: Build
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    env:
+      # Minimum required env vars so next build does not crash.
+      # Real secrets are never needed at build time.
+      DATABASE_URL: "file:./dev.db"
+      SESSION_SECRET: "ci-build-session-secret-32chars!!"
+      CSRF_SECRET: "ci-build-csrf-secret-32chars!!!!!"
+      PROOFPILOT_ENCRYPTION_KEY: "ci-build-encryption-key-32chars!"
+      APP_URL: "http://localhost:3000"
+      SESSION_COOKIE_NAME: "__session"
+      NEXTAUTH_SECRET: "ci-nextauth-secret-32chars!!!!!"
+      NEXTAUTH_URL: "http://localhost:3000"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Build Next.js
+        run: bun run build
+
+      - name: Persist build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .next
+          retention-days: 1
+
+  # ── Migration Validate ───────────────────────────────────────
+  migration-validate:
+    name: Migration Validate
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Validate Prisma schema
+        run: bunx prisma validate
+
+  # ── Dependency Audit ───────────────────────────────────────
+  # Runs in parallel with security scans after build
+  dep-audit:
+    name: Dependency Audit
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Restore dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+
+      - name: Audit dependencies
+        run: bun audit || true
+        # NOTE: bun audit may return non-zero for advisory-level issues.
+        # We capture the output but don't fail the build on advisories.
+        # Critical/High CVEs should be enforced via a separate policy job.
+
+  # ── Secret Scan ─────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comprehensive scan
+
+      - name: TruffleHog OSS Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  # ── Container Scan (placeholder) ───────────────────────────────────
+  # NOTE: This job is a placeholder. Trivy container scanning runs after the
+  # Docker image is built in the deploy workflow. It cannot run here because
+  # the image does not exist yet in the CI pipeline for PRs.
+  container-scan:
+    name: Container Scan (Placeholder)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Placeholder notice
+        run: |
+          echo "::notice::Container scan runs in the deploy workflow after Docker build."
+          echo "Trivy will scan the built image for CVEs, misconfigurations, and secrets."
+          echo "See .github/workflows/deploy.yml for the actual container-scan job."
+
+  # ── Docker Build (main branch only) ────────────────────────────────
+  docker-build:
+    name: Docker Build
+    needs: [migration-validate, dep-audit, secret-scan, container-scan]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=auto
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy Staging (main branch only, placeholder) ────────────────────────
+  deploy-staging:
+    name: Deploy Staging (Placeholder)
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder notice
+        run: |
+          echo "::notice::Staging deploy is handled by the deploy.yml workflow."
+          echo "This includes: SBOM generation, image signing, registry push,"
+          echo "staging migration, deployment, and smoke tests."

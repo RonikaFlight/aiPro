@@ -1,0 +1,82 @@
+# ========================================================================== #
+# ProofPilot — .dockerignore                                                  #
+# Excludes files that should not enter the Docker build context.               #
+# ========================================================================== #
+
+# Version control
+.git
+.gitignore
+
+# Dependency directories (installed inside the container)
+node_modules
+
+# Build output (rebuilt inside the container)
+.next
+
+# Database files (runtime data, not needed at build time)
+db/
+*.db
+*.db-journal
+*.db-wal
+
+# Environment files (injected at runtime via docker-compose / -e flags)
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+coverage/
+*.test.ts
+*.spec.ts
+
+# Tool results and temporary files
+tool-results/
+agent-ctx/
+upload/
+download/
+
+# Logs
+*.log
+logs/
+dev.log
+
+# Documentation (not needed in production image)
+*.md
+!README.md
+
+# Docker files (avoid recursive builds)
+Dockerfile
+docker-compose.yml
+.dockerignore
+infrastructure/
+
+# Mini-services (built separately)
+mini-services/
+
+# Screenshots and media
+*.png
+*.jpg
+*.jpeg
+*.gif
+!public/logo.svg
+
+# Example files
+examples/
+
+# Caddy (sandbox-specific)
+Caddyfile
+
+# Misc
+LICENSE

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--
+  ProofPilot Demo Target — Intentional Issues for Scanner Testing
+
+  This page contains deliberate quality issues that a QA scanner should detect:
+
+  1. [SEO/ACCESSIBILITY] Missing `lang` attribute on <html> element
+  2. [RESPONSIVE/SEO] Missing viewport meta tag
+  3. [ACCESSIBILITY] Image missing alt text (logo div)
+  4. [HTTP_NAVIGATION] Broken image src (will return 404)
+  5. [FORMS] Form inputs without associated labels
+  6. [HTTP_NAVIGATION] Broken link (href to nonexistent page)
+  7. [SEO] Missing favicon reference
+  8. [SECURITY] Mixed content reference (http:// on assumed https)
+  9. [SEO] Missing meta description
+  10. [ACCESSIBILITY] Missing skip-to-content link
+  11. [SEO] Missing Open Graph tags
+  12. [HTTP_NAVIGATION] Broken external image (intentional 404)
+  13. [ACCESSIBILITY] Button without accessible name
+  14. [SEO] Empty <title> tag
+  15. [PERFORMANCE] Large inline script block (simulated)
+-->
+<html>
+<head>
+  <title></title>
+  <!-- NOTE: No viewport meta tag (issue #2) -->
+  <!-- NOTE: No lang attribute on html (issue #1) -->
+  <!-- NOTE: No meta description (issue #9) -->
+  <!-- NOTE: No favicon (issue #7) -->
+  <!-- NOTE: No Open Graph tags (issue #11) -->
+  <style>
+    /* Issue: heavy inline CSS (poor practice) */
+    body { font-family: sans-serif; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; }
+    .hero { background: #f5f5f5; padding: 60px 20px; text-align: center; }
+    .features { display: flex; gap: 20px; margin: 40px 0; flex-wrap: wrap; }
+    .feature-card { flex: 1; min-width: 200px; background: white; border: 1px solid #ddd; padding: 20px; border-radius: 8px; }
+    .pricing { display: flex; gap: 20px; margin: 40px 0; }
+    .plan { flex: 1; background: white; border: 1px solid #ddd; padding: 20px; border-radius: 8px; text-align: center; }
+    .plan.popular { border: 2px solid #10b981; }
+    .contact-form { margin: 40px 0; }
+    .contact-form input, .contact-form textarea, .contact-form select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; }
+    .contact-form button { background: #10b981; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; }
+    footer { margin-top: 40px; padding: 20px; text-align: center; border-top: 1px solid #ddd; color: #666; }
+    /* Accessibility issue: very light gray text on white background */
+    .muted { color: #e8e8e8; font-size: 14px; }
+  </style>
+  <!-- Issue #15: Simulated large inline script block -->
+  <script>
+    // This is a simulated large script block for performance testing
+    var data = [];
+    for (var i = 0; i < 10000; i++) {
+      data.push({ id: i, name: "Item " + i, value: Math.random() * 100, active: i % 2 === 0 });
+    }
+    function filterData(query) {
+      return data.filter(function(item) { return item.name.indexOf(query) !== -1; });
+    }
+    function sortData(field) {
+      return data.slice().sort(function(a, b) { return a[field] - b[field]; });
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <!-- Hero Section -->
+    <div class="hero">
+      <div style="font-size: 48px; font-weight: bold;">DemoApp</div>
+      <!-- Issue #3: Logo div without alt text (should be <img> with alt) -->
+      <div style="width: 80px; height: 80px; background: #ddd; margin: 0 auto; border-radius: 12px;"></div>
+      <p>The best platform for managing your workflow. Simple, fast, reliable.</p>
+      <button>Get Started</button>
+      <!-- Issue #13: Button without accessible name (empty button) -->
+      <button></button>
+    </div>
+
+    <!-- Features Section -->
+    <h2>Features</h2>
+    <div class="features">
+      <div class="feature-card">
+        <h3>Fast</h3>
+        <p>Lightning fast performance with optimized rendering.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Secure</h3>
+        <p>Enterprise-grade security with end-to-end encryption.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Scalable</h3>
+        <p>Grows with your business from startup to enterprise.</p>
+      </div>
+    </div>
+
+    <!-- Images Section with Issues -->
+    <h2>Our Team</h2>
+    <div style="display: flex; gap: 20px; margin: 20px 0;">
+      <!-- Issue #4: Broken image (404) -->
+      <img src="/images/ceo.jpg" width="150" height="150" style="border-radius: 50%;" />
+      <!-- Issue #12: Broken external image -->
+      <img src="https://broken-url-that-does-not-exist.example.com/photo.jpg" width="150" height="150" style="border-radius: 50%;" alt="CTO" />
+    </div>
+
+    <!-- Pricing Section -->
+    <h2>Pricing</h2>
+    <div class="pricing">
+      <div class="plan">
+        <h3>Starter</h3>
+        <div style="font-size: 36px; font-weight: bold;">$9<span style="font-size: 14px;">/mo</span></div>
+        <p>5 projects, basic support</p>
+      </div>
+      <div class="plan popular">
+        <h3>Professional</h3>
+        <div style="font-size: 36px; font-weight: bold;">$29<span style="font-size: 14px;">/mo</span></div>
+        <p>Unlimited projects, priority support</p>
+      </div>
+      <div class="plan">
+        <h3>Enterprise</h3>
+        <div style="font-size: 36px; font-weight: bold;">$99<span style="font-size: 14px;">/mo</span></div>
+        <p>Custom integrations, SLA</p>
+      </div>
+    </div>
+
+    <!-- Navigation with Broken Link -->
+    <nav>
+      <a href="/">Home</a>
+      <!-- Issue #6: Broken link to nonexistent page -->
+      <a href="/about-us-team-page">About Us</a>
+      <a href="/contact">Contact</a>
+      <!-- Issue #8: Mixed content reference (http on assumed https) -->
+      <a href="http://external-resource.example.com/docs">Documentation</a>
+    </nav>
+
+    <!-- Contact Form -->
+    <div class="contact-form">
+      <h2>Contact Us</h2>
+      <form action="/api/contact" method="POST">
+        <!-- Issue #5: Form inputs without associated labels -->
+        <input type="text" name="name" placeholder="Your Name" />
+        <input type="email" name="email" placeholder="Your Email" />
+        <input type="tel" name="phone" placeholder="Phone Number" />
+        <select name="subject">
+          <option value="">Select a topic</option>
+          <option value="sales">Sales</option>
+          <option value="support">Support</option>
+          <option value="other">Other</option>
+        </select>
+        <textarea name="message" rows="5" placeholder="Your Message"></textarea>
+        <button type="submit">Send Message</button>
+      </form>
+    </div>
+
+    <!-- Accessibility Issue: Low Contrast Text -->
+    <div class="muted">
+      This text has very low contrast and is hard to read for users with visual impairments.
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <p>&copy; 2025 DemoApp. All rights reserved.</p>
+      <p>Built with ❤️ for testing purposes.</p>
+    </footer>
+  </div>
+</body>
+</html>
