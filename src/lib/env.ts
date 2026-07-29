@@ -23,10 +23,10 @@ const schema = z.object({
   SESSION_COOKIE_NAME: z.string().default('__Host-proofpilot_session'),
   SESSION_ABSOLUTE_TTL_SECONDS: z.coerce.number().int().positive().default(432000),
   SESSION_IDLE_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
-  SESSION_SECRET: z.string().min(16),
-  CSRF_SECRET: z.string().min(16),
+  SESSION_SECRET: z.string().min(16).default('dev-session-secret-do-not-use-in-prod-32'),
+  CSRF_SECRET: z.string().min(16).default('dev-csrf-secret-do-not-use-in-prod-32'),
 
-  PROOFPILOT_ENCRYPTION_KEY: z.string().min(20),
+  PROOFPILOT_ENCRYPTION_KEY: z.string().min(20).default('dev-encryption-key-do-not-use-in-prod-20'),
   MASTER_KEY_VERSION: z.coerce.number().int().positive().default(1),
 
   S3_ENDPOINT: z.string().default(''),
