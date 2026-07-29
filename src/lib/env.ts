@@ -20,7 +20,7 @@ const schema = z.object({
   DATABASE_PROVIDER: z.enum(['sqlite', 'postgresql']).default('sqlite'),
   DATABASE_URL: z.string().min(1),
 
-  SESSION_COOKIE_NAME: z.string().default('__Host-proofpilot_session'),
+  SESSION_COOKIE_NAME: z.string().default('proofpilot_session'),
   SESSION_ABSOLUTE_TTL_SECONDS: z.coerce.number().int().positive().default(432000),
   SESSION_IDLE_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   SESSION_SECRET: z.string().min(16).default('dev-session-secret-do-not-use-in-prod-32'),

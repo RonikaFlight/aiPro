@@ -9,7 +9,9 @@
 import { cookies } from 'next/headers'
 import { env } from './env'
 
-export const SESSION_COOKIE_NAME = env.SESSION_COOKIE_NAME
+export function getSessionCookieName(): string {
+  return env.SESSION_COOKIE_NAME
+}
 
 export interface CookieOptions {
   maxAge?: number
@@ -22,8 +24,9 @@ export interface CookieOptions {
 /** Set session cookie (Server Components / Server Actions only). */
 export async function setSessionCookie(token: string, opts: CookieOptions = {}): Promise<void> {
   const isProd = env.APP_ENV === 'production'
+  const cookieName = getSessionCookieName()
   const cookieStore = await cookies()
-  cookieStore.set(SESSION_COOKIE_NAME, token, {
+  cookieStore.set(cookieName, token, {
     httpOnly: opts.httpOnly ?? true,
     secure: opts.secure ?? isProd,
     sameSite: opts.sameSite ?? 'lax',
@@ -33,21 +36,24 @@ export async function setSessionCookie(token: string, opts: CookieOptions = {}):
 }
 
 export async function clearSessionCookie(): Promise<void> {
+  const cookieName = getSessionCookieName()
   const cookieStore = await cookies()
-  cookieStore.delete(SESSION_COOKIE_NAME)
+  cookieStore.delete(cookieName)
 }
 
 export async function readSessionCookie(): Promise<string | undefined> {
+  const cookieName = getSessionCookieName()
   const cookieStore = await cookies()
-  return cookieStore.get(SESSION_COOKIE_NAME)?.value
+  return cookieStore.get(cookieName)?.value
 }
 
 /** Read session cookie from a raw request (for route handlers that have the request object). */
 export function readSessionCookieFromRequest(request: Request): string | undefined {
+  const cookieName = getSessionCookieName()
   const cookieHeader = request.headers.get('cookie') ?? ''
   for (const part of cookieHeader.split(';')) {
     const [name, ...rest] = part.trim().split('=')
-    if (name === SESSION_COOKIE_NAME) {
+    if (name === cookieName) {
       return rest.join('=')
     }
   }
@@ -61,8 +67,9 @@ export function setSessionCookieOnResponse(
   opts: CookieOptions = {},
 ): void {
   const isProd = env.APP_ENV === 'production'
+  const cookieName = getSessionCookieName()
   const parts = [
-    `${SESSION_COOKIE_NAME}=${token}`,
+    `${cookieName}=${token}`,
     'Path=' + (opts.path ?? '/'),
     'SameSite=' + (opts.sameSite ?? 'lax'),
     'HttpOnly',
@@ -73,8 +80,9 @@ export function setSessionCookieOnResponse(
 }
 
 export function clearSessionCookieOnResponse(response: Response): void {
+  const cookieName = getSessionCookieName()
   response.headers.append(
     'Set-Cookie',
-    `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`,
+    `${cookieName}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly`,
   )
 }
