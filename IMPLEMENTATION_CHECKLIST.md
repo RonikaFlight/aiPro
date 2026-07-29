@@ -35,7 +35,7 @@
 - [x] Platform roles (USER/SUPPORT/PLATFORM_ADMIN)
 - [x] Centralized permission map + guards
 - [x] Audit logging (login, logout, MFA, role change, secret access, etc.)
-- [ ] Tenant-isolation tests (Phase 12)
+- [x] Tenant-isolation tests (Phase 12) — 71 tests in `tests/isolation/tenant-isolation.test.ts`: permission role boundaries (CLIENT/VIEWER/MEMBER/ADMIN/OWNER cannot exceed their role), `workspaceWhere` always includes workspaceId, `assertWorkspaceOwned` blocks cross-workspace resource access (project/scanRun/finding/report), workspace service membership isolation (listWorkspacesForUser scoped, getWorkspace rejects non-members and removed members, stranger cannot access), project service scoping (listProjects/getProject workspace-gated, CLIENT/VIEWER cannot create, MEMBER cannot delete), run service scoping (getRun/cancelRun workspace-gated, CLIENT cannot cancel), direct DB query isolation (findings/runs/reports/journeys/projects never overlap between workspaces, workspaceWhere prevents unscoped queries), membership edge cases (removing member revokes access, re-adding restores access, cross-workspace project access blocked), data count isolation (no intersection between workspace finding/run IDs), membership lookup scoped by userId+workspaceId, removed memberships excluded from active queries, data integrity (all findings/runs/reports have correct workspaceId matching their project). Bug fix: `workspace-service.ts` getWorkspace used `include: { plan: true }` but Workspace model has no `plan` relation — fixed to use `subscriptions` → `plan`.
 
 ## Phase 3 — Core SaaS
 

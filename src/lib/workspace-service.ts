@@ -97,8 +97,11 @@ export async function getWorkspace(workspaceId: string, userId: string) {
   }
   const workspace = await db.workspace.findUniqueOrThrow({
     where: { id: workspaceId },
-    include: { plan: true },
+    include: {
+      subscriptions: { orderBy: { createdAt: 'desc' }, take: 1, include: { plan: true } },
+    },
   })
+  const sub = workspace.subscriptions[0]
   return {
     id: workspace.id,
     name: workspace.name,
@@ -107,7 +110,7 @@ export async function getWorkspace(workspaceId: string, userId: string) {
     accentColor: workspace.accentColor,
     brandName: workspace.brandName,
     retentionDays: workspace.retentionDays,
-    plan: workspace.plan ? { code: workspace.plan.code, name: workspace.plan.name } : null,
+    plan: sub?.plan ? { code: sub.plan.code, name: sub.plan.name } : null,
     role: membership.role as WorkspaceRole,
     createdAt: workspace.createdAt,
   }

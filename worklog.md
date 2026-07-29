@@ -1125,3 +1125,28 @@ Stage Summary:
 - New API routes: 11 routes for notifications/webhooks/schedules
 - Code quality: all lint errors resolved, unnecessary `any` casts removed
 - 16 checklist items marked complete, 12 remaining (admin pages, deployment hooks, Slack, Persian/RTL UI, unit tests, E2E, security tests, CI/CD, Docker, docs)
+
+---
+Task ID: 3 (Tenant Isolation Tests — Phase 12)
+Agent: main (Z.ai Code)
+Task: Implement tenant-isolation tests as the first incomplete item from IMPLEMENTATION_CHECKLIST.md
+
+Work Log:
+- Read PROJECT_MEMORY.md and IMPLEMENTATION_CHECKLIST.md to identify first incomplete item
+- Identified "Tenant-isolation tests (Phase 12)" at line 38 as first incomplete item
+- Analyzed full tenant isolation architecture: permissions.ts, auth-context.ts, scan-auth.ts, workspace-service.ts, project-service.ts, run-service.ts, db.ts
+- Identified and fixed bug in workspace-service.ts: `getWorkspace()` used `include: { plan: true }` but Workspace model has no direct `plan` relation — changed to `subscriptions` → `plan`
+- Created test environment preload file `tests/isolation/test-env.ts` for setting required env vars before module load
+- Created comprehensive test file `tests/isolation/tenant-isolation.test.ts` with 71 tests across 11 describe blocks
+- Fixed Prisma schema alignment issues (ScanRun has no targetUrl field, Finding uses affectedUrl/normalizedUrl/fingerprint, Report requires sectionsJson, Journey has no workspaceId or definition fields)
+- Fixed Prisma compound key issue (deleteMany with workspaceId_userId compound key not supported — used individual fields instead)
+- Fixed canManageRole test expectations to match actual ROLE_RANK hierarchy (VIEWER=0, CLIENT=1, MEMBER=2, ADMIN=3, OWNER=4)
+- Fixed ForbiddenError class mismatch (permissions.ts has its own ForbiddenError vs errors.ts)
+- Added try/finally cleanup for temporary membership in "both workspaces" test
+- All 71 tests pass in 2.51s
+
+Stage Summary:
+- Created: tests/isolation/tenant-isolation.test.ts (71 tests, 11 categories)
+- Created: tests/isolation/test-env.ts (env var preload)
+- Fixed: src/lib/workspace-service.ts getWorkspace() plan include bug
+- Updated: IMPLEMENTATION_CHECKLIST.md line 38 marked [x]
